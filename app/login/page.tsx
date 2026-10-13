@@ -9,7 +9,24 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { CandlestickChart, Lock, Mail, ArrowRight, AlertCircle, CheckCircle2 } from "lucide-react"
 
-export default function LoginPage() {
+function LoginFormFallback() {
+  return (
+    <div className="w-full max-w-md p-6 sm:p-8 space-y-6 bg-card border border-border/80 rounded-2xl shadow-xl flex flex-col items-center justify-center min-h-[460px]">
+      <div className="h-12 w-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-xs animate-pulse">
+        <CandlestickChart className="h-6 w-6" />
+      </div>
+      <div className="h-6 w-48 bg-muted rounded animate-pulse mt-4" />
+      <div className="h-4 w-64 bg-muted/60 rounded animate-pulse mt-2" />
+      <div className="w-full space-y-4 mt-6">
+        <div className="h-10 bg-muted/40 rounded-lg animate-pulse" />
+        <div className="h-10 bg-muted/40 rounded-lg animate-pulse" />
+        <div className="h-10 bg-primary/30 rounded-lg animate-pulse" />
+      </div>
+    </div>
+  )
+}
+
+function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get("callbackUrl") || "/"
@@ -133,3 +150,12 @@ export default function LoginPage() {
     </div>
   )
 }
+
+export default function LoginPage() {
+  return (
+    <React.Suspense fallback={<LoginFormFallback />}>
+      <LoginForm />
+    </React.Suspense>
+  )
+}
+
