@@ -57,6 +57,7 @@ export interface ResponsiveComboboxProps {
   triggerClassName?: string
   contentClassName?: string
   disabled?: boolean
+  nativeButton?: boolean
   renderTrigger?: (selectedItem?: ComboboxItem, isOpen?: boolean) => React.ReactElement
 }
 
@@ -73,6 +74,7 @@ export function ResponsiveCombobox({
   triggerClassName,
   contentClassName,
   disabled = false,
+  nativeButton,
   renderTrigger,
 }: ResponsiveComboboxProps) {
   const [open, setOpen] = React.useState(false)
@@ -238,12 +240,23 @@ export function ResponsiveCombobox({
     ? renderTrigger(selectedItem, open)
     : defaultTrigger
 
+  // Auto-detect whether triggerNode is a native button or custom component
+  const isNativeBtn = React.useMemo(() => {
+    if (nativeButton !== undefined) return nativeButton
+    if (React.isValidElement(triggerNode)) {
+      if (typeof triggerNode.type === "string") {
+        return triggerNode.type === "button"
+      }
+    }
+    return true
+  }, [nativeButton, triggerNode])
+
   // Mobile Bottom Sheet
   if (isMobile) {
     return (
       <div className={cn("relative w-full", className)}>
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetTrigger nativeButton={!renderTrigger} render={triggerNode} />
+          <SheetTrigger nativeButton={isNativeBtn} render={triggerNode} />
           <SheetContent
             side="bottom"
             className="p-0 z-[60] rounded-t-2xl max-h-[85vh] border-t border-border flex flex-col bg-popover"
@@ -269,7 +282,7 @@ export function ResponsiveCombobox({
   return (
     <div className={cn("relative w-full", className)}>
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger nativeButton={!renderTrigger} render={triggerNode} />
+        <PopoverTrigger nativeButton={isNativeBtn} render={triggerNode} />
         <PopoverContent
           align="start"
           sideOffset={4}

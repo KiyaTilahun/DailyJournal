@@ -324,10 +324,17 @@ export function TradeJournalView(props: TradeJournalViewProps = {}) {
                   </div>
 
                   {trade.mistakeTag && trade.mistakeTag !== "NONE" ? (
-                    <Badge variant="destructive" className="text-[10px] gap-1 py-0.5">
-                      <AlertTriangle className="h-3 w-3" />
-                      {trade.mistakeTag.replace(/_/g, " ")}
-                    </Badge>
+                    <div className="flex flex-col gap-1 items-start">
+                      <Badge variant="destructive" className="text-[10px] gap-1 py-0.5">
+                        <AlertTriangle className="h-3 w-3" />
+                        {trade.mistakeTag.replace(/_/g, " ")}
+                      </Badge>
+                      {trade.newsAtEntry && (trade.newsHeadline || trade.newsHeadlineAtEntry) && (
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-medium">
+                          ⚠ headline within 90min of entry: &apos;{trade.newsHeadline || trade.newsHeadlineAtEntry}&apos;
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <Badge variant="secondary" className="text-[10px] text-emerald-600 dark:text-emerald-400 gap-1 py-0 bg-emerald-500/10">
                       <CheckCircle2 className="h-3 w-3" />
@@ -500,9 +507,16 @@ export function TradeJournalView(props: TradeJournalViewProps = {}) {
               </div>
 
               {inspectingTrade.mistakeTag !== "NONE" && (
-                <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-400">
-                  <strong>Mistake Recorded: </strong>
-                  {inspectingTrade.mistakeTag.replace(/_/g, " ")}
+                <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-700 dark:text-rose-400 space-y-1">
+                  <div>
+                    <strong>Mistake Recorded: </strong>
+                    {inspectingTrade.mistakeTag.replace(/_/g, " ")}
+                  </div>
+                  {inspectingTrade.newsAtEntry && (inspectingTrade.newsHeadline || inspectingTrade.newsHeadlineAtEntry) && (
+                    <div className="text-[11px] font-medium text-rose-600 dark:text-rose-300">
+                      ⚠ headline within 90min of entry: &apos;{inspectingTrade.newsHeadline || inspectingTrade.newsHeadlineAtEntry}&apos;
+                    </div>
+                  )}
                 </div>
               )}
 

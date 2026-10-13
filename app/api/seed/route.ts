@@ -59,6 +59,9 @@ export async function POST() {
       postTradeEmotion: t.postTradeEmotion,
       mistakes: t.mistakeTag !== "NONE" ? [t.mistakeTag] : [],
       lessons: t.lessonsLearned,
+      newsAtEntry: Boolean(t.newsAtEntry),
+      newsHeadline: t.newsHeadline || t.newsHeadlineAtEntry || "",
+      newsHeadlineAtEntry: t.newsHeadline || t.newsHeadlineAtEntry || "",
       tags: t.tags,
     }))
 

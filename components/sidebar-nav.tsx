@@ -5,7 +5,6 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   ChevronLeft,
-  ChevronRight,
   Download,
   Flame,
   Plus,
@@ -80,12 +79,15 @@ export function SidebarNav() {
                     ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold shadow-xs"
                     : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
                 )}
+                aria-label={route.label}
               >
                 <Icon className="h-4 w-4" />
               </Link>
             }
           />
-          <TooltipContent side="right">{route.label}</TooltipContent>
+          <TooltipContent side="right">
+            {route.badge ? `${route.label} (${route.badge})` : route.label}
+          </TooltipContent>
         </Tooltip>
       )
     }
@@ -116,40 +118,75 @@ export function SidebarNav() {
     <TooltipProvider delay={150}>
       <aside
         className={cn(
-          "relative flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-300 ease-in-out select-none h-full",
+          "relative z-30 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-200 ease-in-out select-none h-full",
           sidebarCollapsed ? "w-16" : "w-64"
         )}
       >
+        {/* Floating Collapse / Expand Toggle Button on Right Border */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                aria-expanded={!sidebarCollapsed}
+                className="absolute -right-3 top-5 z-40 hidden lg:flex h-6 w-6 items-center justify-center rounded-full border border-sidebar-border bg-background shadow-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <ChevronLeft
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform duration-200",
+                    sidebarCollapsed && "rotate-180"
+                  )}
+                />
+              </button>
+            }
+          />
+          <TooltipContent side="right">
+            {sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          </TooltipContent>
+        </Tooltip>
+
         {/* Brand Block */}
-        <div className="flex h-14 items-center justify-between px-3 border-b border-sidebar-border">
-          <Link href="/" className="flex items-center gap-2 overflow-hidden group">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow-sm transition-transform group-hover:scale-105">
-              <TrendingUp className="h-4 w-4" />
-            </div>
-            {!sidebarCollapsed && (
+        <div
+          className={cn(
+            "flex h-14 items-center border-b border-sidebar-border shrink-0",
+            sidebarCollapsed ? "justify-center px-0" : "px-3.5"
+          )}
+        >
+          {sidebarCollapsed ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Link
+                    href="/"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow-xs transition-transform hover:scale-105"
+                    aria-label="FX Journal Pro Dashboard"
+                  >
+                    <TrendingUp className="h-5 w-5" />
+                  </Link>
+                }
+              />
+              <TooltipContent side="right">FX Journal Pro</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Link href="/" className="flex items-center gap-2.5 min-w-0 group">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold shadow-xs transition-transform group-hover:scale-105">
+                <TrendingUp className="h-5 w-5" />
+              </div>
               <div className="flex flex-col min-w-0">
-                <span className="font-semibold text-sm tracking-tight truncate flex items-center gap-1.5 text-foreground">
+                <span className="font-semibold text-sm tracking-tight truncate flex items-center gap-1.5 text-foreground leading-tight">
                   FX Journal
                   <span className="text-[10px] uppercase font-mono px-1 rounded bg-primary/10 text-primary border border-primary/20">
                     Pro
                   </span>
                 </span>
-                <span className="text-[11px] text-muted-foreground truncate">
+                <span className="text-[11px] text-muted-foreground truncate leading-tight">
                   Discipline & Analytics
                 </span>
               </div>
-            )}
-          </Link>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleSidebar}
-            className="h-7 w-7 text-muted-foreground hover:text-foreground hidden lg:flex"
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </Button>
+            </Link>
+          )}
         </div>
 
         {/* Primary "+ Log Trade" CTA */}
@@ -161,9 +198,10 @@ export function SidebarNav() {
                   <Button
                     onClick={openNewTradeModal}
                     size="icon"
-                    className="h-10 w-10 mx-auto bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                    className="h-9 w-9 mx-auto bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs"
+                    aria-label="Log New Trade"
                   >
-                    <Plus className="h-5 w-5" />
+                    <Plus className="h-4 w-4" />
                   </Button>
                 }
               />
@@ -193,13 +231,14 @@ export function SidebarNav() {
                     variant="outline"
                     size="icon"
                     onClick={() => setCommandPaletteOpen(true)}
-                    className="h-9 w-10 mx-auto text-muted-foreground hover:text-foreground"
+                    className="h-9 w-9 mx-auto text-muted-foreground hover:text-foreground"
+                    aria-label="Search & Filter"
                   >
                     <Search className="h-4 w-4" />
                   </Button>
                 }
               />
-              <TooltipContent side="right">Search (⌘K)</TooltipContent>
+              <TooltipContent side="right">Search & Filter (⌘K)</TooltipContent>
             </Tooltip>
           ) : (
             <button

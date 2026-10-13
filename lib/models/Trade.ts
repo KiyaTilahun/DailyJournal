@@ -38,6 +38,9 @@ export interface ITrade extends Document {
   postTradeEmotion?: string
   mistakes: string[]
   lessons?: string
+  newsAtEntry?: boolean
+  newsHeadline?: string
+  newsHeadlineAtEntry?: string
 
   screenshots: ITradeScreenshot[]
   tags: string[]
@@ -91,6 +94,11 @@ const tradeSchema = new Schema<ITrade>(
     postTradeEmotion: { type: String, default: "HELD_TO_TP" },
     mistakes: [{ type: String }],
     lessons: { type: String, default: "" },
+
+    // ── §3.5 Marketaux News Mistake Detector ─────────────────
+    newsAtEntry: { type: Boolean, default: false },
+    newsHeadline: { type: String, default: "" },
+    newsHeadlineAtEntry: { type: String, default: "" },
 
     screenshots: [
       {

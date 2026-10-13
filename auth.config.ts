@@ -28,7 +28,9 @@ export const authConfig: NextAuthConfig = {
         pathname === "/login" ||
         pathname === "/register" ||
         pathname.startsWith("/api/auth") ||
-        pathname.startsWith("/api/fx")
+        pathname.startsWith("/api/fx") ||
+        pathname.startsWith("/api/market") ||
+        pathname.startsWith("/api/cron")
 
       if (isPublic) {
         if (isLoggedIn && (pathname === "/login" || pathname === "/register")) {

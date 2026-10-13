@@ -69,6 +69,9 @@ export interface Trade {
   postTradeEmotion: PostTradeEmotion
   mistakeTag: MistakeTag
   lessonsLearned: string
+  newsAtEntry?: boolean
+  newsHeadline?: string
+  newsHeadlineAtEntry?: string
   entryScreenshotUrl?: string
   htfScreenshotUrl?: string
   tags: string[]

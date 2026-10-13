@@ -56,6 +56,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AdjustBalanceDialog } from "@/components/adjust-balance-dialog"
+import { MarketPulseCard } from "@/components/market-pulse-card"
+import { MarketNewsCard } from "@/components/market-news-card"
 
 interface DashboardOverviewProps {
   summary: TradingAccountSummary
@@ -152,6 +154,11 @@ export function DashboardOverview() {
   const todayStr = new Date().toISOString().slice(0, 10)
   const todayTrades = trades.filter(t => t.entryDate.startsWith(todayStr))
   const recentTrades = trades.slice(0, 5)
+
+  // User open / active traded instruments for Market Pulse and News
+  const userOpenSymbols = React.useMemo(() => {
+    return Array.from(new Set(trades.map(t => t.instrument))).filter(Boolean)
+  }, [trades])
 
   // Total cost of mistakes
   const totalCostOfMistakes = mistakeAnalysis.reduce((acc, m) => acc + m.totalLoss, 0)
@@ -492,80 +499,88 @@ export function DashboardOverview() {
           </CardContent>
         </Card>
 
-        {/* Right: Recent Trades List (Design Prompt 5.4) */}
-        <Card className="lg:col-span-4 rounded-xl border shadow-xs flex flex-col">
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <div>
-              <CardTitle className="text-base font-semibold tracking-tight">Recent Trades</CardTitle>
-              <CardDescription className="text-xs">Last executed positions</CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onNavigateTab("journal")}
-              className="text-xs text-muted-foreground hover:text-foreground h-7 px-2"
-            >
-              View all
-            </Button>
-          </CardHeader>
-          <CardContent className="flex-1 space-y-3">
-            {recentTrades.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-center text-muted-foreground text-xs space-y-2">
-                <Compass className="h-8 w-8 text-muted-foreground/40" />
-                <p>No trades logged yet.</p>
-                <Button size="sm" onClick={onNewTrade} className="text-xs">
-                  Log your first trade
-                </Button>
+        {/* Right Column: Recent Trades, Market Pulse (Movers), & Market News */}
+        <div className="lg:col-span-4 space-y-6">
+          <Card className="rounded-xl border shadow-xs flex flex-col">
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
+              <div>
+                <CardTitle className="text-base font-semibold tracking-tight">Recent Trades</CardTitle>
+                <CardDescription className="text-xs">Last executed positions</CardDescription>
               </div>
-            ) : (
-              recentTrades.map(t => (
-                <div
-                  key={t.id}
-                  onClick={() => onSelectTrade(t)}
-                  className="group flex items-center justify-between p-2.5 rounded-lg border border-border/60 bg-card hover:bg-muted/50 hover:border-border transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={`h-7 w-7 rounded-md flex items-center justify-center shrink-0 text-[11px] font-bold ${
-                        t.direction === "LONG"
-                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                          : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                      }`}
-                    >
-                      {t.direction === "LONG" ? "BUY" : "SELL"}
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-xs tracking-tight truncate">{t.instrument}</span>
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          {t.strategy.replace(/_/g, " ").toLowerCase()}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onNavigateTab("journal")}
+                className="text-xs text-muted-foreground hover:text-foreground h-7 px-2"
+              >
+                View all
+              </Button>
+            </CardHeader>
+            <CardContent className="flex-1 space-y-3">
+              {recentTrades.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center text-muted-foreground text-xs space-y-2">
+                  <Compass className="h-8 w-8 text-muted-foreground/40" />
+                  <p>No trades logged yet.</p>
+                  <Button size="sm" onClick={onNewTrade} className="text-xs">
+                    Log your first trade
+                  </Button>
+                </div>
+              ) : (
+                recentTrades.map(t => (
+                  <div
+                    key={t.id}
+                    onClick={() => onSelectTrade(t)}
+                    className="group flex items-center justify-between p-2.5 rounded-lg border border-border/60 bg-card hover:bg-muted/50 hover:border-border transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`h-7 w-7 rounded-md flex items-center justify-center shrink-0 text-[11px] font-bold ${
+                          t.direction === "LONG"
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                            : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                        }`}
+                      >
+                        {t.direction === "LONG" ? "BUY" : "SELL"}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-xs tracking-tight truncate">{t.instrument}</span>
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {t.strategy.replace(/_/g, " ").toLowerCase()}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground truncate">
+                          {new Date(t.entryDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • {t.session}
                         </span>
                       </div>
-                      <span className="text-[10px] text-muted-foreground truncate">
-                        {new Date(t.entryDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} • {t.session}
+                    </div>
+
+                    <div className="flex flex-col items-end shrink-0 pl-2">
+                      <span
+                        className={`font-mono text-xs font-bold ${
+                          t.netPnL >= 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-rose-600 dark:text-rose-400"
+                        }`}
+                      >
+                        {t.netPnL >= 0 ? "+" : ""}${t.netPnL.toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {t.realizedRR}R
                       </span>
                     </div>
                   </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
 
-                  <div className="flex flex-col items-end shrink-0 pl-2">
-                    <span
-                      className={`font-mono text-xs font-bold ${
-                        t.netPnL >= 0
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-rose-600 dark:text-rose-400"
-                      }`}
-                    >
-                      {t.netPnL >= 0 ? "+" : ""}${t.netPnL.toFixed(2)}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {t.realizedRR}R
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+          {/* Market Pulse Card (Live Quotes & Top Session Movers) */}
+          <MarketPulseCard userSymbols={userOpenSymbols} />
+
+          {/* Market News Card (Marketaux Headlines Below Movers) */}
+          <MarketNewsCard userSymbols={userOpenSymbols} />
+        </div>
       </div>
 
       {/* 5. Strategy Breakdown & Mistake Analysis Grid (SRS 4.3 & 4.4) */}

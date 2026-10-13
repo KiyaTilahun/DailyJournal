@@ -21,8 +21,20 @@ import {
   ShieldAlert,
   BarChart2,
   ChevronsUpDown,
-  Search
+  Search,
+  Minus,
+  ChevronRight,
+  Star,
+  Info
 } from "lucide-react"
+import { cn } from "cn"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from "@/components/ui/tooltip"
 
 import {
   Trade,
@@ -361,6 +373,14 @@ export const POST_TRADE_EMOTION_OPTIONS = [
   { value: "PANIC_EXIT", label: "Panic Market Close", subLabel: "Impulsive market execution on drawdown", badge: "Panic" },
 ]
 
+export const CONVICTION_LABELS: Record<number, string> = {
+  1: "1 — Low conviction",
+  2: "2 — Moderate-low conviction",
+  3: "3 — Moderate conviction",
+  4: "4 — High conviction",
+  5: "5 — Very high conviction",
+}
+
 export function TradeEntryDialog({
   open,
   onOpenChange,
@@ -502,16 +522,75 @@ export function TradeEntryDialog({
   // Psychology & Media State
   const [preTradeEmotion, setPreTradeEmotion] = React.useState<PreTradeEmotion>("CONFIDENT")
   const [preTradeConfidence, setPreTradeConfidence] = React.useState<number>(4)
+  const [hoverRating, setHoverRating] = React.useState<number | null>(null)
   const [postTradeEmotion, setPostTradeEmotion] = React.useState<PostTradeEmotion>("HELD_TO_TP")
   const [mistakeTag, setMistakeTag] = React.useState<MistakeTag>("NONE")
   const [lessonsLearned, setLessonsLearned] = React.useState("")
+  const [reflectionError, setReflectionError] = React.useState<string | null>(null)
   const [entryScreenshotUrl, setEntryScreenshotUrl] = React.useState("")
   const [htfScreenshotUrl, setHtfScreenshotUrl] = React.useState("")
   const [tagInput, setTagInput] = React.useState("")
-  const [tags, setTags] = React.useState<string[]>(["Discipline"])
+  const [tags, setTags] = React.useState<string[]>([])
 
   // Active sub-tab inside the dialog
   const [formStep, setFormStep] = React.useState<"execution" | "strategy" | "psychology">("execution")
+
+  // Step 1: Subgroup States & Inline Validation
+  const [costsOpen, setCostsOpen] = React.useState(false)
+  const [morePairsOpen, setMorePairsOpen] = React.useState(false)
+  const [slError, setSlError] = React.useState<string | null>(null)
+  const [tpError, setTpError] = React.useState<string | null>(null)
+
+  const validateLevels = React.useCallback(() => {
+    const ep = parseFloat(entryPrice)
+    const sl = parseFloat(stopLossPrice)
+    const tp = parseFloat(takeProfitPrice)
+
+    if (!isNaN(ep) && !isNaN(sl)) {
+      if (direction === "LONG" && sl >= ep) {
+        setSlError("For BUY (Long), Stop Loss must be below Entry Price.")
+      } else if (direction === "SHORT" && sl <= ep) {
+        setSlError("For SELL (Short), Stop Loss must be above Entry Price.")
+      } else {
+        setSlError(null)
+      }
+    } else {
+      setSlError(null)
+    }
+
+    if (!isNaN(ep) && !isNaN(tp) && tp > 0) {
+      if (direction === "LONG" && tp <= ep) {
+        setTpError("For BUY (Long), Take Profit should be above Entry Price.")
+      } else if (direction === "SHORT" && tp >= ep) {
+        setTpError("For SELL (Short), Take Profit should be below Entry Price.")
+      } else {
+        setTpError(null)
+      }
+    } else {
+      setTpError(null)
+    }
+  }, [entryPrice, stopLossPrice, takeProfitPrice, direction])
+
+  const handleLotStep = (delta: number) => {
+    const cur = parseFloat(lotSize) || 1.0
+    const nextVal = Math.max(0.01, Number((cur + delta).toFixed(2)))
+    setLotSize(nextVal.toString())
+  }
+
+  const handleDirectionSelect = (dir: TradeDirection) => {
+    setDirection(dir)
+    const ep = parseFloat(entryPrice)
+    const sl = parseFloat(stopLossPrice)
+    if (!isNaN(ep) && !isNaN(sl)) {
+      if (dir === "LONG" && sl >= ep) {
+        setSlError("For BUY (Long), Stop Loss must be below Entry Price.")
+      } else if (dir === "SHORT" && sl <= ep) {
+        setSlError("For SELL (Short), Stop Loss must be above Entry Price.")
+      } else {
+        setSlError(null)
+      }
+    }
+  }
 
   // Handle switching instrument and auto-updating default prices sensibly
   const handleSelectInstrument = (symbol: string, preset?: InstrumentPreset) => {
@@ -574,11 +653,13 @@ export function TradeEntryDialog({
       setEntryScreenshotUrl(editingTrade.entryScreenshotUrl || "")
       setHtfScreenshotUrl(editingTrade.htfScreenshotUrl || "")
       setTags(editingTrade.tags || [])
+      setReflectionError(null)
+      setHoverRating(null)
     } else {
       const now = new Date()
       const nowStr = now.toISOString().slice(0, 16)
       setEntryDate(nowStr)
-      setExitDate(nowStr)
+      setExitDate("") // Rule 6: default Entry to now, Exit empty for open trades
       setInstrument("EUR/USD")
       setDirection("LONG")
       setEntryPrice("1.08500")
@@ -599,12 +680,14 @@ export function TradeEntryDialog({
       setSelectedConfluences([])
       setPreTradeEmotion("CONFIDENT")
       setPreTradeConfidence(4)
+      setHoverRating(null)
       setPostTradeEmotion("HELD_TO_TP")
       setMistakeTag("NONE")
       setLessonsLearned("")
+      setReflectionError(null)
       setEntryScreenshotUrl("")
       setHtfScreenshotUrl("")
-      setTags(["Discipline"])
+      setTags([])
       setFormStep("execution")
     }
   }, [editingTrade, open])
@@ -681,10 +764,59 @@ export function TradeEntryDialog({
     )
   }
 
-  const handleAddTag = () => {
-    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
-      setTags([...tags, tagInput.trim()])
-      setTagInput("")
+  // Dynamic suggested tags derived from mistake classification and pre-trade mindset
+  const suggestedTags = React.useMemo(() => {
+    const pool: string[] = []
+    if (mistakeTag === "CHASED_PRICE") {
+      pool.push("NoChasing", "WaitRetest", "Discipline")
+    } else if (mistakeTag === "OVER_LEVERAGED") {
+      pool.push("RiskDiscipline", "StrictLotSize", "CapitalPreservation")
+    } else if (mistakeTag === "EARLY_EXIT") {
+      pool.push("HoldToTP", "Patience", "TrustPlan")
+    } else if (mistakeTag === "IGNORED_NEWS") {
+      pool.push("NewsCollision", "EventRisk", "CalendarCheck")
+    } else if (mistakeTag === "REVENGE_TRADING") {
+      pool.push("WalkAway", "ResetMindset", "Discipline")
+    } else if (mistakeTag === "NO_STOP_LOSS") {
+      pool.push("HardStopLoss", "RiskControl")
+    } else if (mistakeTag === "TRADED_OUTSIDE_PLAN") {
+      pool.push("StickToPlan", "EdgeOnly")
+    }
+
+    if (preTradeEmotion === "CONFIDENT") {
+      pool.push("A+Setup", "HighConviction")
+    } else if (preTradeEmotion === "CALM") {
+      pool.push("ZenTrader", "RulesFirst")
+    } else if (preTradeEmotion === "FOMO") {
+      pool.push("FOMOControl", "WaitConfirmation")
+    } else if (preTradeEmotion === "ANXIOUS") {
+      pool.push("SizeReduction", "ConfidenceBuilder")
+    }
+
+    const fallbacks = ["A+Setup", "Discipline", "ProcessOverPnL", "StrictRisk"]
+    for (const f of fallbacks) {
+      if (!pool.includes(f)) pool.push(f)
+    }
+
+    return pool.filter(tag => !tags.includes(tag)).slice(0, 4)
+  }, [mistakeTag, preTradeEmotion, tags])
+
+  const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault()
+      const trimmed = tagInput.replace(/^#/, "").trim()
+      if (trimmed && !tags.includes(trimmed)) {
+        setTags([...tags, trimmed])
+        setTagInput("")
+      }
+    } else if (e.key === "Backspace" && tagInput === "" && tags.length > 0) {
+      setTags(tags.slice(0, -1))
+    }
+  }
+
+  const handleAddSuggestedTag = (st: string) => {
+    if (!tags.includes(st)) {
+      setTags([...tags, st])
     }
   }
 
@@ -692,8 +824,23 @@ export function TradeEntryDialog({
     setTags(tags.filter(x => x !== t))
   }
 
+  const validateReflection = React.useCallback(() => {
+    if (mistakeTag !== "NONE" && !lessonsLearned.trim()) {
+      setReflectionError("Reflection notes are required when classifying a mistake.")
+      return false
+    }
+    setReflectionError(null)
+    return true
+  }, [mistakeTag, lessonsLearned])
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (mistakeTag !== "NONE" && !lessonsLearned.trim()) {
+      setReflectionError("Reflection notes are required when classifying a mistake.")
+      setFormStep("psychology")
+      return
+    }
 
     onSaveTrade({
       instrument: instrument.toUpperCase().trim(),
@@ -735,152 +882,145 @@ export function TradeEntryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full sm:max-w-4xl lg:max-w-5xl max-h-[90vh] overflow-y-auto p-0 gap-0 border border-border shadow-2xl rounded-2xl">
-        {/* Header Strip with Spacious Layout */}
-        <DialogHeader className="p-6 sm:px-8 sm:py-6 border-b border-border/70 bg-muted/20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <TooltipProvider delay={100}>
+        <DialogContent className="w-full sm:max-w-4xl lg:max-w-5xl max-h-[90vh] overflow-y-auto p-0 gap-0 border border-border shadow-2xl rounded-2xl">
+        {/* Header Strip with Compact Height for 900px Viewport */}
+        <DialogHeader className="p-4 sm:px-6 sm:py-3.5 border-b border-border/70 bg-muted/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <DialogTitle className="text-xl sm:text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
+              <DialogTitle className="text-lg sm:text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
                 <span>{editingTrade ? "Edit Trade Record" : "Log Trade Entry"}</span>
-                <span className="font-mono text-sm px-2.5 py-0.5 rounded-full font-bold border bg-card shadow-xs">
+                <span className="font-mono text-xs px-2 py-0.5 rounded-full font-bold border bg-card shadow-xs">
                   {instrument}
                 </span>
                 <Badge
                   variant={calculatedMetrics.netPnL >= 0 ? "default" : "destructive"}
-                  className="font-mono text-xs px-2.5 py-1 ml-1"
+                  className="font-mono text-[11px] px-2 py-0.5 ml-1"
                 >
                   {calculatedMetrics.netPnL >= 0 ? "+" : ""}${calculatedMetrics.netPnL.toFixed(2)} Net
                 </Badge>
               </DialogTitle>
-              <DialogDescription className="text-xs sm:text-sm text-muted-foreground mt-1">
+              <DialogDescription className="text-xs text-muted-foreground mt-0.5">
                 Frictionless logging for quantitative pricing, strategy confluences, and psychological mindset.
               </DialogDescription>
             </div>
           </div>
 
-          {/* Stepper Tabs with Generous Whitespace */}
-          <div className="flex items-center gap-2.5 pt-4">
+          {/* Stepper Tabs */}
+          <div className="flex items-center gap-2 pt-2.5">
             <button
               type="button"
               onClick={() => setFormStep("execution")}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold border text-center transition-all flex items-center justify-center gap-2 ${
+              className={cn(
+                "flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold border text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer",
                 formStep === "execution"
-                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
                   : "bg-card text-muted-foreground hover:bg-muted/60 border-border"
-              }`}
+              )}
             >
-              <BarChart2 className="h-4 w-4 shrink-0" />
+              <BarChart2 className="h-3.5 w-3.5 shrink-0" />
               <span>1. Execution Data</span>
             </button>
             <button
               type="button"
               onClick={() => setFormStep("strategy")}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold border text-center transition-all flex items-center justify-center gap-2 ${
+              className={cn(
+                "flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold border text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer",
                 formStep === "strategy"
-                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
                   : "bg-card text-muted-foreground hover:bg-muted/60 border-border"
-              }`}
+              )}
             >
-              <Layers className="h-4 w-4 shrink-0" />
+              <Layers className="h-3.5 w-3.5 shrink-0" />
               <span>2. Strategy & Setup</span>
             </button>
             <button
               type="button"
               onClick={() => setFormStep("psychology")}
-              className={`flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold border text-center transition-all flex items-center justify-center gap-2 ${
+              className={cn(
+                "flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold border text-center transition-all flex items-center justify-center gap-1.5 cursor-pointer",
                 formStep === "psychology"
-                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
                   : "bg-card text-muted-foreground hover:bg-muted/60 border-border"
-              }`}
+              )}
             >
-              <Brain className="h-4 w-4 shrink-0" />
+              <Brain className="h-3.5 w-3.5 shrink-0" />
               <span>3. Psychology & Reflection</span>
             </button>
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-5">
           {/* STEP 1: Quantitative Execution Data */}
           {formStep === "execution" && (
-            <div className="space-y-6 animate-in fade-in-50 duration-200">
-              {/* Row 1: Pair, Direction, Timestamps */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {/* Instrument / Pair */}
-                <div className="space-y-2 lg:col-span-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="space-y-5 animate-in fade-in-50 duration-200">
+              {/* Row 1: Instrument & Direction */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                {/* 1.1 Instrument Section (lg:col-span-7) */}
+                <div className="lg:col-span-7">
+                  <div className="flex items-center justify-between gap-1.5 mb-1.5 flex-wrap">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <Label htmlFor="instrument" className="text-xs sm:text-sm font-semibold flex items-center gap-1.5">
-                        Instrument / Pair
+                      <Label htmlFor="instrument" className="text-xs font-semibold text-foreground">
+                        Instrument
                       </Label>
-                      {isGoldAsset ? (
-                        <span className="text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
-                          🪙 Gold (100 oz/lot)
-                        </span>
-                      ) : isJpyAsset ? (
-                        <span className="text-[10px] bg-sky-500/15 text-sky-700 dark:text-sky-300 font-semibold px-2 py-0.5 rounded-full border border-sky-500/30">
-                          JPY Cross (1k unit)
-                        </span>
-                      ) : isCryptoOrIndex ? (
-                        <span className="text-[10px] bg-purple-500/15 text-purple-700 dark:text-purple-300 font-semibold px-2 py-0.5 rounded-full border border-purple-500/30">
-                          Index / Crypto
-                        </span>
-                      ) : (
-                        <span className="text-[10px] bg-muted text-muted-foreground font-medium px-2 py-0.5 rounded-full border border-border">
-                          Standard FX (100k lot)
-                        </span>
-                      )}
-
-                      {/* Subtle live benchmark ticker chip next to the instrument picker */}
+                      {/* XAU Benchmark Ticker Chip */}
                       {goldTicker && (
                         <span
-                          title="Reference benchmark rate via exchangerate.fun (cached 6h). Not used for execution pricing."
-                          className="text-[10px] bg-amber-500/10 text-amber-800 dark:text-amber-300 font-mono font-medium px-2 py-0.5 rounded-full border border-amber-500/25 inline-flex items-center gap-1.5 shadow-2xs"
+                          title="Reference rate via exchangerate.fun (cached 6h)"
+                          className="text-[10px] bg-amber-500/10 text-amber-800 dark:text-amber-300 font-mono font-medium px-1.5 py-0.2 rounded-full border border-amber-500/25 inline-flex items-center gap-1"
                         >
                           <span className="h-1.5 w-1.5 rounded-full bg-amber-500 inline-block animate-pulse" />
                           XAU/USD ≈ {goldTicker.formattedPrice}
                         </span>
                       )}
-                    </div>
-
-                    {/* Presets catalog combobox */}
-                    <div className="w-auto">
-                      <ResponsiveCombobox
-                        value={instrument}
-                        onValueChange={val => handleSelectInstrument(val)}
-                        groups={INSTRUMENT_GROUPS}
-                        searchPlaceholder="Search pair..."
-                        emptyMessage="No instrument found"
-                        title="Select Trading Instrument"
-                        contentClassName="w-[340px]"
-                        renderTrigger={(selected) => (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-xs px-2.5 border-dashed bg-muted/40 hover:bg-muted font-medium flex items-center gap-1.5 cursor-pointer"
-                          >
-                            <Search className="h-3 w-3 text-muted-foreground" />
-                            <span>{selected ? selected.label : "Preset Catalog ▾"}</span>
-                            <ChevronsUpDown className="h-3 w-3 opacity-50" />
-                          </Button>
-                        )}
-                      />
+                      {/* Asset Category Tag */}
+                      {isGoldAsset ? (
+                        <span className="text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                          🪙 Gold (100 oz/lot)
+                        </span>
+                      ) : isJpyAsset ? (
+                        <span className="text-[10px] bg-sky-500/15 text-sky-700 dark:text-sky-300 font-semibold px-1.5 py-0.2 rounded-full border border-sky-500/30">
+                          JPY Cross
+                        </span>
+                      ) : isCryptoOrIndex ? (
+                        <span className="text-[10px] bg-purple-500/15 text-purple-700 dark:text-purple-300 font-semibold px-1.5 py-0.2 rounded-full border border-purple-500/30">
+                          Index / Crypto
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-muted text-muted-foreground font-medium px-1.5 py-0.2 rounded-full border border-border">
+                          Standard FX
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  <Input
-                    id="instrument"
-                    placeholder="e.g. XAU/USD, EUR/USD, GBP/JPY, BTC/USD"
+                  {/* Responsive Combobox Trigger (Search icon + Selected Instrument + Chevron) */}
+                  <ResponsiveCombobox
                     value={instrument}
-                    onChange={e => setInstrument(e.target.value.toUpperCase())}
-                    required
-                    className="font-mono text-sm uppercase h-10 bg-background"
+                    onValueChange={val => handleSelectInstrument(val)}
+                    groups={INSTRUMENT_GROUPS}
+                    searchPlaceholder="Search pair or symbol..."
+                    emptyMessage="No instrument found"
+                    title="Select Trading Instrument"
+                    contentClassName="w-[320px]"
+                    renderTrigger={(selected) => (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-9 px-3 font-mono text-sm justify-between bg-background border-input hover:bg-muted/40 flex items-center cursor-pointer shadow-2xs"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-bold text-foreground tracking-tight">{instrument || "Select Instrument"}</span>
+                        </div>
+                        <ChevronsUpDown className="h-3.5 w-3.5 opacity-50 shrink-0 ml-2" />
+                      </Button>
+                    )}
                   />
 
-                  {/* 1-Click Quick-Picks Row */}
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                    <span className="text-[11px] text-muted-foreground font-semibold mr-0.5">Quick:</span>
-                    {QUICK_PRESET_SYMBOLS.map(sym => {
+                  {/* Single Inline Row: Quick-Pair Pills (Max 6 + Popover) */}
+                  <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                    {QUICK_PRESET_SYMBOLS.slice(0, 6).map(sym => {
                       const isSelected = instrument === sym
                       const isGold = sym.includes("XAU")
                       return (
@@ -888,57 +1028,97 @@ export function TradeEntryDialog({
                           key={sym}
                           type="button"
                           onClick={() => handleSelectInstrument(sym)}
-                          className={`text-[11px] font-mono px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
+                          className={cn(
+                            "text-[10px] font-mono px-2 py-0.5 rounded border transition-all cursor-pointer",
                             isSelected
-                              ? isGold
-                                ? "bg-amber-500/25 text-amber-700 dark:text-amber-300 border-amber-500 font-bold shadow-xs ring-1 ring-amber-500/50"
-                                : "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                              ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
                               : isGold
                               ? "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20 font-semibold"
-                              : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/60"
-                          }`}
+                              : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/70"
+                          )}
                         >
-                          {isGold ? "🪙 Gold (XAU/USD)" : sym}
+                          {isGold ? "🪙 Gold" : sym}
                         </button>
                       )
                     })}
+
+                    {QUICK_PRESET_SYMBOLS.length > 6 && (
+                      <Popover open={morePairsOpen} onOpenChange={setMorePairsOpen}>
+                        <PopoverTrigger
+                          render={
+                            <button
+                              type="button"
+                              className="text-[10px] font-mono px-2 py-0.5 rounded border border-dashed border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted/40 cursor-pointer"
+                            >
+                              +{QUICK_PRESET_SYMBOLS.length - 6} more
+                            </button>
+                          }
+                        />
+                        <PopoverContent className="w-48 p-2 flex flex-wrap gap-1 shadow-md z-[70]" align="start">
+                          {QUICK_PRESET_SYMBOLS.slice(6).map(sym => (
+                            <button
+                              key={sym}
+                              type="button"
+                              onClick={() => {
+                                handleSelectInstrument(sym)
+                                setMorePairsOpen(false)
+                              }}
+                              className={cn(
+                                "text-[10px] font-mono px-2 py-1 rounded border transition-all cursor-pointer flex-1 text-center min-w-[70px]",
+                                instrument === sym
+                                  ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                  : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/60"
+                              )}
+                            >
+                              {sym}
+                            </button>
+                          ))}
+                        </PopoverContent>
+                      </Popover>
+                    )}
                   </div>
                 </div>
 
-                {/* Direction Toggle */}
-                <div className="space-y-2 lg:col-span-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Direction</Label>
-                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-lg border border-border h-10 items-center">
+                {/* 1.2 Direction (lg:col-span-5) */}
+                <div className="lg:col-span-5">
+                  <Label className="text-xs font-semibold mb-1.5 block">Direction</Label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-lg border border-border h-9 items-center">
                     <button
                       type="button"
-                      onClick={() => setDirection("LONG")}
-                      className={`flex items-center justify-center gap-1.5 h-8 rounded-md text-xs font-bold transition-all ${
+                      onClick={() => handleDirectionSelect("LONG")}
+                      aria-pressed={direction === "LONG"}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 h-7 rounded-md text-xs font-bold transition-all cursor-pointer",
                         direction === "LONG"
                           ? "bg-emerald-600 text-white shadow-xs"
                           : "text-muted-foreground hover:text-foreground"
-                      }`}
+                      )}
                     >
-                      <ArrowUpRight className="h-4 w-4" />
-                      BUY (Long)
+                      <ArrowUpRight className="h-3.5 w-3.5" />
+                      <span>BUY (Long)</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDirection("SHORT")}
-                      className={`flex items-center justify-center gap-1.5 h-8 rounded-md text-xs font-bold transition-all ${
+                      onClick={() => handleDirectionSelect("SHORT")}
+                      aria-pressed={direction === "SHORT"}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 h-7 rounded-md text-xs font-bold transition-all cursor-pointer",
                         direction === "SHORT"
                           ? "bg-rose-600 text-white shadow-xs"
                           : "text-muted-foreground hover:text-foreground"
-                      }`}
+                      )}
                     >
-                      <ArrowDownRight className="h-4 w-4" />
-                      SELL (Short)
+                      <ArrowDownRight className="h-3.5 w-3.5" />
+                      <span>SELL (Short)</span>
                     </button>
                   </div>
                 </div>
+              </div>
 
-                {/* Entry Time */}
-                <div className="space-y-2 lg:col-span-2">
-                  <Label htmlFor="entryDate" className="text-xs sm:text-sm font-semibold">
+              {/* Row 2: Timestamps (2-col row with tight labels) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="entryDate" className="text-xs font-semibold mb-1.5 block">
                     Entry Date & Time
                   </Label>
                   <Input
@@ -947,134 +1127,231 @@ export function TradeEntryDialog({
                     value={entryDate}
                     onChange={e => setEntryDate(e.target.value)}
                     required
-                    className="text-xs sm:text-sm h-10 bg-background font-mono"
+                    className="text-xs sm:text-sm h-9 bg-background font-mono"
                   />
                 </div>
-
-                {/* Exit Time */}
-                <div className="space-y-2 lg:col-span-2">
-                  <Label htmlFor="exitDate" className="text-xs sm:text-sm font-semibold">
-                    Exit Date & Time
+                <div>
+                  <Label htmlFor="exitDate" className="text-xs font-semibold mb-1.5 flex items-center justify-between text-muted-foreground">
+                    <span>Exit Date & Time</span>
+                    <span className="text-[10px] font-normal">(empty for open trade)</span>
                   </Label>
                   <Input
                     id="exitDate"
                     type="datetime-local"
                     value={exitDate}
                     onChange={e => setExitDate(e.target.value)}
-                    required
-                    className="text-xs sm:text-sm h-10 bg-background font-mono"
+                    className="text-xs sm:text-sm h-9 bg-background font-mono"
                   />
                 </div>
               </div>
 
-              {/* Pricing & Position Card */}
-              <div className="rounded-xl border border-border/80 bg-card p-5 sm:p-6 space-y-5 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/60 gap-2">
-                  <span className="text-xs sm:text-sm font-bold uppercase tracking-wider text-muted-foreground">
-                    Execution Pricing & Position Sizing
-                  </span>
-                  <div className="flex items-center gap-4 text-xs sm:text-sm">
-                    <span className="text-muted-foreground">
-                      Planned R:R: <strong className="text-foreground font-mono font-bold">{calculatedMetrics.plannedRR}</strong>
-                    </span>
-                    <span className="text-muted-foreground">
-                      Realized R:R:{" "}
-                      <strong
-                        className={`font-mono font-bold ${
-                          calculatedMetrics.realizedRR >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
-                        }`}
-                      >
-                        {calculatedMetrics.realizedRR}R
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Price levels */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="entryPrice" className="text-xs font-semibold text-muted-foreground">
-                      Entry Price
-                    </Label>
-                    <Input
-                      id="entryPrice"
-                      type="number"
-                      step="any"
-                      value={entryPrice}
-                      onChange={e => setEntryPrice(e.target.value)}
-                      required
-                      className="font-mono text-sm h-10 bg-background"
-                    />
+              {/* Section 2: Execution Pricing & Position Sizing Card */}
+              <div className="rounded-xl border border-border/80 bg-card p-4 sm:p-5 shadow-xs space-y-5">
+                {/* 2.a) TRADE LEVELS Sub-group */}
+                <fieldset className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-1.5 border-b border-border/50">
+                    <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Trade Levels
+                    </legend>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-muted-foreground">
+                        Planned R:R: <strong className="font-mono text-foreground font-bold">{calculatedMetrics.plannedRR}</strong>
+                      </span>
+                      <span className="text-muted-foreground">
+                        Realized R:R:{" "}
+                        <strong
+                          className={cn(
+                            "font-mono font-bold",
+                            calculatedMetrics.realizedRR >= 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                          )}
+                        >
+                          {calculatedMetrics.realizedRR}R
+                        </strong>
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="stopLossPrice" className="text-xs font-semibold text-rose-500">
-                      Stop Loss (SL)
-                    </Label>
-                    <Input
-                      id="stopLossPrice"
-                      type="number"
-                      step="any"
-                      value={stopLossPrice}
-                      onChange={e => setStopLossPrice(e.target.value)}
-                      required
-                      className="font-mono text-sm h-10 bg-background border-rose-300 dark:border-rose-900/80 focus-visible:ring-rose-500"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="takeProfitPrice" className="text-xs font-semibold text-emerald-500">
-                      Take Profit (TP)
-                    </Label>
-                    <Input
-                      id="takeProfitPrice"
-                      type="number"
-                      step="any"
-                      value={takeProfitPrice}
-                      onChange={e => setTakeProfitPrice(e.target.value)}
-                      className="font-mono text-sm h-10 bg-background border-emerald-300 dark:border-emerald-900/80 focus-visible:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="exitPrice" className="text-xs font-semibold text-muted-foreground">
-                      Actual Exit Price
-                    </Label>
-                    <Input
-                      id="exitPrice"
-                      type="number"
-                      step="any"
-                      value={exitPrice}
-                      onChange={e => setExitPrice(e.target.value)}
-                      required
-                      className="font-mono text-sm h-10 bg-background"
-                    />
-                  </div>
-                </div>
-
-                {/* Position, Risk & Costs */}
-                <div className="space-y-3.5 pt-1">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-                    {/* Lot Size */}
-                    <div className="space-y-1.5">
-                      <Label htmlFor="lotSize" className="text-xs font-semibold text-muted-foreground">
-                        Lot Size
+                  {/* 4-col row matching visual and tab order */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {/* Tab 1: Entry Price */}
+                    <div>
+                      <Label htmlFor="entryPrice" className="text-xs font-semibold mb-1.5 block">
+                        Entry Price
                       </Label>
                       <Input
-                        id="lotSize"
+                        id="entryPrice"
                         type="number"
-                        step="0.01"
-                        value={lotSize}
-                        onChange={e => setLotSize(e.target.value)}
-                        className="font-mono text-sm h-10 bg-background"
+                        step="any"
+                        inputMode="decimal"
+                        value={entryPrice}
+                        onChange={e => setEntryPrice(e.target.value)}
+                        onBlur={validateLevels}
+                        required
+                        className="font-mono text-sm h-9 bg-background"
                       />
                     </div>
 
-                    {/* Risk % (0-10%) */}
-                    <div className="space-y-1.5">
-                      <Label htmlFor="riskPercent" className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
+                    {/* Tab 2: Stop Loss (Red Ring + WCAG Text Cue) */}
+                    <div>
+                      <Label htmlFor="stopLossPrice" className="text-xs font-semibold mb-1.5 flex items-center justify-between text-rose-600 dark:text-rose-400">
+                        <span>Stop Loss</span>
+                        <span className="text-[10px] font-normal text-muted-foreground">(Risk Cut)</span>
+                      </Label>
+                      <Input
+                        id="stopLossPrice"
+                        type="number"
+                        step="any"
+                        inputMode="decimal"
+                        value={stopLossPrice}
+                        onChange={e => setStopLossPrice(e.target.value)}
+                        onBlur={validateLevels}
+                        required
+                        className="font-mono text-sm h-9 bg-background border-rose-300 dark:border-rose-900/80 focus-visible:ring-rose-500"
+                      />
+                      {slError && (
+                        <p className="text-[10px] text-rose-500 font-medium mt-1 leading-tight flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3 shrink-0" />
+                          <span>{slError}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Tab 3: Take Profit (Green Ring + WCAG Text Cue) */}
+                    <div>
+                      <Label htmlFor="takeProfitPrice" className="text-xs font-semibold mb-1.5 flex items-center justify-between text-emerald-600 dark:text-emerald-400">
+                        <span>Take Profit</span>
+                        <span className="text-[10px] font-normal text-muted-foreground">(Target)</span>
+                      </Label>
+                      <Input
+                        id="takeProfitPrice"
+                        type="number"
+                        step="any"
+                        inputMode="decimal"
+                        value={takeProfitPrice}
+                        onChange={e => setTakeProfitPrice(e.target.value)}
+                        onBlur={validateLevels}
+                        className="font-mono text-sm h-9 bg-background border-emerald-300 dark:border-emerald-900/80 focus-visible:ring-emerald-500"
+                      />
+                      {tpError && (
+                        <p className="text-[10px] text-amber-500 font-medium mt-1 leading-tight flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3 shrink-0" />
+                          <span>{tpError}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Tab 4: Actual Exit Price */}
+                    <div>
+                      <Label htmlFor="exitPrice" className="text-xs font-semibold mb-1.5 block text-muted-foreground">
+                        Actual Exit
+                      </Label>
+                      <Input
+                        id="exitPrice"
+                        type="number"
+                        step="any"
+                        inputMode="decimal"
+                        value={exitPrice}
+                        onChange={e => setExitPrice(e.target.value)}
+                        placeholder="leave blank if open"
+                        className="font-mono text-sm h-9 bg-background"
+                      />
+                    </div>
+                  </div>
+                </fieldset>
+
+                {/* 2.b) SIZE & RISK Sub-group */}
+                <fieldset className="space-y-3 pt-2 border-t border-border/40">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Size & Risk
+                  </legend>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                    {/* Lot Size as a Stepper (− value + lots suffix) */}
+                    <div>
+                      <Label htmlFor="lotSize" className="text-xs font-semibold mb-1.5 block">
+                        Lot Size
+                      </Label>
+                      <div className="flex items-center">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleLotStep(-0.1)}
+                          className="h-9 w-9 rounded-r-none shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                          aria-label="Decrease lot size"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </Button>
+                        <div className="relative flex-1">
+                          <Input
+                            id="lotSize"
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            inputMode="decimal"
+                            value={lotSize}
+                            onChange={e => setLotSize(e.target.value)}
+                            className="h-9 rounded-none text-center font-mono text-sm pr-9 bg-background focus-visible:z-10"
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground pointer-events-none select-none">
+                            lots
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleLotStep(0.1)}
+                          className="h-9 w-9 rounded-l-none shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                          aria-label="Increase lot size"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+
+                      {/* Quick Lots Chips & Suggested Hint */}
+                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                        <span className="text-[10px] text-muted-foreground font-medium mr-0.5">Quick:</span>
+                        {QUICK_LOT_SIZES.map(qLot => (
+                          <button
+                            type="button"
+                            key={qLot}
+                            onClick={() => setLotSize(qLot.toString())}
+                            className={cn(
+                              "text-[10px] font-mono px-2 py-0.5 rounded border transition-all cursor-pointer",
+                              lotSize === qLot.toString()
+                                ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                                : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/70"
+                            )}
+                          >
+                            {qLot.toFixed(2)}
+                          </button>
+                        ))}
+                      </div>
+
+                      {suggestedLotInfo && (
+                        <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 font-medium">
+                          <Sparkles className="h-3 w-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span>Suggested: <strong className="font-mono font-bold">{suggestedLotInfo.suggestedLots} lots</strong> (${suggestedLotInfo.riskAmount} · {suggestedLotInfo.pipsAtRisk}p)</span>
+                          <button
+                            type="button"
+                            onClick={() => setLotSize(suggestedLotInfo.suggestedLots.toString())}
+                            className="underline font-bold hover:opacity-80 ml-1 cursor-pointer"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Risk % (optional, helper text below) */}
+                    <div>
+                      <Label htmlFor="riskPercent" className="text-xs font-semibold mb-1.5 flex items-center gap-1">
                         <Percent className="h-3 w-3 text-primary" />
-                        Risk % (0–10%)
+                        <span>Risk %</span>
+                        <span className="text-[10px] text-muted-foreground font-normal">(optional)</span>
                       </Label>
                       <Input
                         id="riskPercent"
@@ -1082,126 +1359,114 @@ export function TradeEntryDialog({
                         step="0.25"
                         min="0"
                         max="10"
-                        placeholder="e.g. 1.0"
+                        inputMode="decimal"
                         value={riskPercent}
                         onChange={e => setRiskPercent(e.target.value)}
-                        className="font-mono text-sm h-10 bg-background"
+                        className="font-mono text-sm h-9 bg-background"
                       />
-                    </div>
-
-                    {/* Commissions */}
-                    <div className="space-y-1.5">
-                      <Label htmlFor="commissions" className="text-xs font-semibold text-muted-foreground">
-                        Commissions ($)
-                      </Label>
-                      <Input
-                        id="commissions"
-                        type="number"
-                        step="0.1"
-                        value={commissions}
-                        onChange={e => setCommissions(e.target.value)}
-                        className="font-mono text-sm h-10 bg-background"
-                      />
-                    </div>
-
-                    {/* Swaps */}
-                    <div className="space-y-1.5">
-                      <Label htmlFor="swaps" className="text-xs font-semibold text-muted-foreground">
-                        Swaps ($)
-                      </Label>
-                      <Input
-                        id="swaps"
-                        type="number"
-                        step="0.1"
-                        value={swaps}
-                        onChange={e => setSwaps(e.target.value)}
-                        className="font-mono text-sm h-10 bg-background"
-                      />
-                    </div>
-
-                    {/* Spread Cost */}
-                    <div className="space-y-1.5 col-span-2 sm:col-span-1">
-                      <Label htmlFor="spreadCost" className="text-xs font-semibold text-muted-foreground">
-                        Spread Cost ($)
-                      </Label>
-                      <Input
-                        id="spreadCost"
-                        type="number"
-                        step="0.1"
-                        value={spreadCost}
-                        onChange={e => setSpreadCost(e.target.value)}
-                        className="font-mono text-sm h-10 bg-background"
-                      />
+                      <span className="text-[11px] text-muted-foreground mt-1 block">
+                        % of balance at risk
+                      </span>
                     </div>
                   </div>
+                </fieldset>
 
-                  {/* Quick Lot Buttons & Suggested Lot Size Hint (Rule 3.3) */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[11px] text-muted-foreground font-semibold mr-1">Quick Lots:</span>
-                      {QUICK_LOT_SIZES.map(qLot => (
-                        <button
-                          type="button"
-                          key={qLot}
-                          onClick={() => setLotSize(qLot.toString())}
-                          className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold border transition-all cursor-pointer ${
-                            lotSize === qLot.toString()
-                              ? "bg-primary text-primary-foreground border-primary shadow-xs"
-                              : "bg-muted/40 border-border/70 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          }`}
-                        >
-                          {qLot.toFixed(2)}
-                        </button>
-                      ))}
+                {/* 2.c) COSTS (Collapsed by default) */}
+                <div className="pt-2 border-t border-border/40 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setCostsOpen(prev => !prev)}
+                    className="flex items-center justify-between w-full py-1.5 px-2.5 rounded-lg bg-muted/30 hover:bg-muted/60 border border-border/60 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ChevronRight className={cn("h-3.5 w-3.5 transition-transform duration-200", costsOpen && "rotate-90")} />
+                      <span>Costs (3 fields · defaults $0.00)</span>
                     </div>
+                    <span className="font-mono text-[11px] font-semibold text-foreground/80">
+                      ${(parseFloat(commissions || "0") + parseFloat(swaps || "0") + parseFloat(spreadCost || "0")).toFixed(2)} total
+                    </span>
+                  </button>
 
-                    {/* Computed suggested lot hint */}
-                    {suggestedLotInfo && (
-                      <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 font-medium">
-                        <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                        <span>
-                          Suggested lot: <strong className="font-mono font-bold">{suggestedLotInfo.suggestedLots}</strong>
-                          <span className="text-muted-foreground ml-1">
-                            (${suggestedLotInfo.riskAmount} risk · {suggestedLotInfo.pipsAtRisk} pips)
+                  {costsOpen && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1 animate-in fade-in-50 duration-150">
+                      <div>
+                        <Label htmlFor="commissions" className="text-xs font-semibold mb-1.5 block text-muted-foreground">
+                          Commissions
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-mono text-muted-foreground pointer-events-none select-none">
+                            $
                           </span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setLotSize(suggestedLotInfo.suggestedLots.toString())}
-                          className="ml-1 text-[11px] underline font-bold hover:text-emerald-900 dark:hover:text-emerald-100 cursor-pointer"
-                        >
-                          Apply
-                        </button>
+                          <Input
+                            id="commissions"
+                            type="number"
+                            step="0.1"
+                            inputMode="decimal"
+                            value={commissions}
+                            onChange={e => setCommissions(e.target.value)}
+                            className="h-9 pl-6 font-mono text-sm bg-background"
+                          />
+                        </div>
                       </div>
-                    )}
-                  </div>
+
+                      <div>
+                        <Label htmlFor="swaps" className="text-xs font-semibold mb-1.5 block text-muted-foreground">
+                          Swaps
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-mono text-muted-foreground pointer-events-none select-none">
+                            $
+                          </span>
+                          <Input
+                            id="swaps"
+                            type="number"
+                            step="0.1"
+                            inputMode="decimal"
+                            value={swaps}
+                            onChange={e => setSwaps(e.target.value)}
+                            className="h-9 pl-6 font-mono text-sm bg-background"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="spreadCost" className="text-xs font-semibold mb-1.5 block text-muted-foreground">
+                          Spread Cost
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-mono text-muted-foreground pointer-events-none select-none">
+                            $
+                          </span>
+                          <Input
+                            id="spreadCost"
+                            type="number"
+                            step="0.1"
+                            inputMode="decimal"
+                            value={spreadCost}
+                            onChange={e => setSpreadCost(e.target.value)}
+                            className="h-9 pl-6 font-mono text-sm bg-background"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* PnL Summary Banner */}
-                <div className="rounded-xl bg-muted/40 p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-border">
-                  <div className="flex items-center gap-6 text-xs sm:text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Gross PnL: </span>
-                      <strong className="font-mono text-foreground font-bold">
-                        ${calculatedMetrics.grossPnL.toFixed(2)}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Total Fees: </span>
-                      <strong className="font-mono text-muted-foreground">
-                        ${(parseFloat(commissions || "0") + parseFloat(swaps || "0") + parseFloat(spreadCost || "0")).toFixed(2)}
-                      </strong>
-                    </div>
+                {/* PnL Summary Strip */}
+                <div className="rounded-lg bg-muted/40 px-3.5 py-2.5 flex items-center justify-between border border-border/70 text-xs">
+                  <div className="flex items-center gap-4 text-muted-foreground">
+                    <span>Gross: <strong className="font-mono text-foreground">${calculatedMetrics.grossPnL.toFixed(2)}</strong></span>
+                    <span>Total Fees: <strong className="font-mono">${(parseFloat(commissions || "0") + parseFloat(swaps || "0") + parseFloat(spreadCost || "0")).toFixed(2)}</strong></span>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs sm:text-sm text-muted-foreground font-semibold">Net PnL:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-muted-foreground">Net PnL:</span>
                     <span
-                      className={`font-mono text-xl sm:text-2xl font-extrabold tracking-tight ${
+                      className={cn(
+                        "font-mono text-base font-extrabold tracking-tight",
                         calculatedMetrics.netPnL >= 0
                           ? "text-emerald-600 dark:text-emerald-400"
                           : "text-rose-600 dark:text-rose-400"
-                      }`}
+                      )}
                     >
                       {calculatedMetrics.netPnL >= 0 ? "+" : ""}${calculatedMetrics.netPnL.toFixed(2)}
                     </span>
@@ -1213,283 +1478,446 @@ export function TradeEntryDialog({
 
           {/* STEP 2: Setup & Strategy (Qualitative) */}
           {formStep === "strategy" && (
-            <div className="space-y-6 animate-in fade-in-50 duration-200">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {/* Strategy Dropdown */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs sm:text-sm font-semibold">Strategy Model</Label>
-                    <Link
-                      href="/strategies"
-                      target="_blank"
-                      className="text-[11px] text-primary hover:underline"
-                    >
-                      Manage
-                    </Link>
+            <div className="space-y-5 animate-in fade-in-50 duration-200">
+              {/* 2.1 Strategy Model & Timeframe Context */}
+              <fieldset className="space-y-3">
+                <div className="flex items-center justify-between pb-1.5 border-b border-border/50">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Playbook & Execution Timeframe
+                  </legend>
+                  <Link
+                    href="/strategies"
+                    target="_blank"
+                    className="text-[11px] text-primary hover:underline font-medium"
+                  >
+                    Manage Playbooks ↗
+                  </Link>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Strategy Dropdown */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">Strategy Model</Label>
+                    <ResponsiveCombobox
+                      value={strategy}
+                      onValueChange={val => setStrategy(val)}
+                      groups={backendStrategies.length > 0 ? backendStrategies : undefined}
+                      items={backendStrategies.length === 0 ? STRATEGY_OPTIONS : undefined}
+                      searchPlaceholder="Search strategy model..."
+                      emptyMessage="No strategy model found."
+                      title="Select Strategy Model"
+                      placeholder="Select strategy model"
+                    />
                   </div>
-                  <ResponsiveCombobox
-                    value={strategy}
-                    onValueChange={val => setStrategy(val)}
-                    groups={backendStrategies.length > 0 ? backendStrategies : undefined}
-                    items={backendStrategies.length === 0 ? STRATEGY_OPTIONS : undefined}
-                    searchPlaceholder="Search strategy model..."
-                    emptyMessage="No strategy model found."
-                    title="Select Strategy Model"
-                    placeholder="Select strategy model"
-                  />
-                </div>
 
-                {/* Session */}
-                <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Trading Session</Label>
-                  <ResponsiveCombobox
-                    value={session}
-                    onValueChange={val => setSession(val as TradeSession)}
-                    items={SESSION_OPTIONS}
-                    searchPlaceholder="Search trading session..."
-                    emptyMessage="No session found."
-                    title="Select Trading Session"
-                    placeholder="Select session"
-                  />
-                </div>
+                  {/* Session */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">Trading Session</Label>
+                    <ResponsiveCombobox
+                      value={session}
+                      onValueChange={val => setSession(val as TradeSession)}
+                      items={SESSION_OPTIONS}
+                      searchPlaceholder="Search trading session..."
+                      emptyMessage="No session found."
+                      title="Select Trading Session"
+                      placeholder="Select session"
+                    />
+                  </div>
 
-                {/* Execution TF */}
-                <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Execution Timeframe</Label>
-                  <ResponsiveCombobox
-                    value={executionTimeframe}
-                    onValueChange={val => setExecutionTimeframe(val as "1m" | "5m" | "15m" | "30m" | "1h")}
-                    items={EXECUTION_TF_OPTIONS}
-                    searchPlaceholder="Search execution timeframe..."
-                    emptyMessage="No timeframe found."
-                    title="Select Execution Timeframe"
-                    placeholder="Execution TF"
-                  />
-                </div>
+                  {/* Execution TF */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">Execution Timeframe</Label>
+                    <ResponsiveCombobox
+                      value={executionTimeframe}
+                      onValueChange={val => setExecutionTimeframe(val as "1m" | "5m" | "15m" | "30m" | "1h")}
+                      items={EXECUTION_TF_OPTIONS}
+                      searchPlaceholder="Search execution timeframe..."
+                      emptyMessage="No timeframe found."
+                      title="Select Execution Timeframe"
+                      placeholder="Execution TF"
+                    />
+                  </div>
 
-                {/* Trend TF */}
-                <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Trend Context TF</Label>
-                  <ResponsiveCombobox
-                    value={trendTimeframe}
-                    onValueChange={val => setTrendTimeframe(val as "1h" | "4h" | "Daily" | "Weekly")}
-                    items={TREND_TF_OPTIONS}
-                    searchPlaceholder="Search trend context TF..."
-                    emptyMessage="No timeframe found."
-                    title="Select Trend Context Timeframe"
-                    placeholder="Trend TF"
-                  />
+                  {/* Trend TF */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">Trend Context TF</Label>
+                    <ResponsiveCombobox
+                      value={trendTimeframe}
+                      onValueChange={val => setTrendTimeframe(val as "1h" | "4h" | "Daily" | "Weekly")}
+                      items={TREND_TF_OPTIONS}
+                      searchPlaceholder="Search trend context TF..."
+                      emptyMessage="No timeframe found."
+                      title="Select Trend Context Timeframe"
+                      placeholder="Trend TF"
+                    />
+                  </div>
                 </div>
-              </div>
+              </fieldset>
 
-              {/* Confluence Checkbox Grid with MultiSelect Combobox (Rule 7) */}
-              <div className="rounded-xl border border-border/80 bg-card p-5 sm:p-6 space-y-4 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-muted-foreground block">
+              {/* 2.2 Confluence Checkbox Grid with MultiSelect Combobox */}
+              <fieldset className="space-y-3">
+                <div className="flex items-center justify-between pb-1.5 border-b border-border/50">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                     Checklist & Active Strategies Met
-                  </Label>
+                  </legend>
                   <span className="text-xs text-muted-foreground font-mono">
-                    {selectedConfluences.length} of {displayedConfluences.length} selected
+                    {selectedConfluences.length} of {displayedConfluences.length} criteria active
                   </span>
                 </div>
 
-                {/* Searchable Multi-Select Combobox with Badge Trigger */}
-                <MultiSelectCombobox
-                  values={selectedConfluences}
-                  onValuesChange={setSelectedConfluences}
-                  options={Array.from(new Set([...displayedConfluences, ...selectedConfluences]))}
-                  placeholder="Click to search and select active strategies & confluences..."
-                  searchPlaceholder="Filter active strategies checklist..."
-                  emptyMessage="No matching strategy or confluence found."
-                  title="Active Strategies & Confluence Criteria"
-                  maxBadges={3}
-                />
+                <div className="rounded-xl border border-border/80 bg-card p-4 space-y-3 shadow-xs">
+                  {/* Searchable Multi-Select Combobox with Badge Trigger */}
+                  <MultiSelectCombobox
+                    values={selectedConfluences}
+                    onValuesChange={setSelectedConfluences}
+                    options={Array.from(new Set([...displayedConfluences, ...selectedConfluences]))}
+                    placeholder="Click to search and select active strategies & confluences..."
+                    searchPlaceholder="Filter active strategies checklist..."
+                    emptyMessage="No matching strategy or confluence found."
+                    title="Active Strategies & Confluence Criteria"
+                    maxBadges={3}
+                  />
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
-                  {displayedConfluences.map(item => {
-                    const checked = selectedConfluences.includes(item)
-                    return (
-                      <button
-                        type="button"
-                        key={item}
-                        onClick={() => toggleConfluence(item)}
-                        className={`flex items-center gap-2.5 p-2.5 rounded-lg border text-xs sm:text-sm text-left transition-all cursor-pointer ${
-                          checked
-                            ? "bg-primary/10 border-primary text-foreground font-semibold shadow-xs"
-                            : "bg-background border-border/70 text-muted-foreground hover:bg-muted/40"
-                        }`}
-                      >
-                        <div
-                          className={`h-4 w-4 rounded flex items-center justify-center border shrink-0 ${
-                            checked ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground/40"
-                          }`}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                    {displayedConfluences.map(item => {
+                      const checked = selectedConfluences.includes(item)
+                      return (
+                        <button
+                          type="button"
+                          key={item}
+                          onClick={() => toggleConfluence(item)}
+                          className={cn(
+                            "flex items-center gap-2 p-2 rounded-lg border text-xs text-left transition-all cursor-pointer",
+                            checked
+                              ? "bg-primary/10 border-primary text-foreground font-semibold shadow-xs"
+                              : "bg-background border-border/70 text-muted-foreground hover:bg-muted/40"
+                          )}
                         >
-                          {checked && <CheckCircle2 className="h-3 w-3" />}
-                        </div>
-                        <span className="truncate">{item}</span>
-                      </button>
-                    )
-                  })}
+                          <div
+                            className={cn(
+                              "h-4 w-4 rounded flex items-center justify-center border shrink-0",
+                              checked ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground/40"
+                            )}
+                          >
+                            {checked && <CheckCircle2 className="h-3 w-3" />}
+                          </div>
+                          <span className="truncate">{item}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
+              </fieldset>
 
-              {/* Screenshot URLs */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div className="space-y-2">
-                  <Label htmlFor="entryScreenshot" className="text-xs sm:text-sm font-semibold flex items-center gap-1.5">
-                    <ImageIcon className="h-4 w-4 text-primary" />
-                    Entry TF Chart URL
-                  </Label>
-                  <Input
-                    id="entryScreenshot"
-                    placeholder="https://tradingview.com/x/... or image link"
-                    value={entryScreenshotUrl}
-                    onChange={e => setEntryScreenshotUrl(e.target.value)}
-                    className="text-xs sm:text-sm h-10 bg-background"
-                  />
+              {/* 2.3 Screenshot URLs */}
+              <fieldset className="space-y-3">
+                <div className="pb-1.5 border-b border-border/50">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Chart Context & Screenshots
+                  </legend>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="htfScreenshot" className="text-xs sm:text-sm font-semibold flex items-center gap-1.5">
-                    <ImageIcon className="h-4 w-4 text-primary" />
-                    Higher TF Context Chart URL
-                  </Label>
-                  <Input
-                    id="htfScreenshot"
-                    placeholder="https://tradingview.com/x/... or image link"
-                    value={htfScreenshotUrl}
-                    onChange={e => setHtfScreenshotUrl(e.target.value)}
-                    className="text-xs sm:text-sm h-10 bg-background"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="entryScreenshot" className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                      <ImageIcon className="h-3.5 w-3.5 text-primary" />
+                      Entry TF Chart URL
+                    </Label>
+                    <Input
+                      id="entryScreenshot"
+                      placeholder="https://tradingview.com/x/... or image link"
+                      value={entryScreenshotUrl}
+                      onChange={e => setEntryScreenshotUrl(e.target.value)}
+                      className="text-xs sm:text-sm h-9 bg-background"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="htfScreenshot" className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
+                      <ImageIcon className="h-3.5 w-3.5 text-primary" />
+                      Higher TF Context Chart URL
+                    </Label>
+                    <Input
+                      id="htfScreenshot"
+                      placeholder="https://tradingview.com/x/... or image link"
+                      value={htfScreenshotUrl}
+                      onChange={e => setHtfScreenshotUrl(e.target.value)}
+                      className="text-xs sm:text-sm h-9 bg-background"
+                    />
+                  </div>
                 </div>
-              </div>
+              </fieldset>
             </div>
           )}
 
           {/* STEP 3: Psychology & Reflection (SRS 3.1) */}
           {formStep === "psychology" && (
-            <div className="space-y-6 animate-in fade-in-50 duration-200">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-                {/* Pre-Trade Emotion */}
-                <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Pre-Trade Mental State</Label>
-                  <ResponsiveCombobox
-                    value={preTradeEmotion}
-                    onValueChange={val => setPreTradeEmotion(val as PreTradeEmotion)}
-                    items={PRE_TRADE_EMOTION_OPTIONS}
-                    searchPlaceholder="Search mental state..."
-                    emptyMessage="No matching state."
-                    title="Pre-Trade Emotional State"
-                    placeholder="Select mindset..."
-                  />
+            <div className="space-y-5 animate-in fade-in-50 duration-200">
+              {/* 3.a) BEFORE THE TRADE */}
+              <fieldset className="space-y-3">
+                <div className="pb-1.5 border-b border-border/50">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Before The Trade
+                  </legend>
                 </div>
 
-                {/* Pre-Trade Confidence 1-5 */}
-                <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">
-                    Setup Conviction Level ({preTradeConfidence}/5)
-                  </Label>
-                  <div className="flex items-center gap-1.5 h-10">
-                    {[1, 2, 3, 4, 5].map(rating => (
-                      <button
-                        type="button"
-                        key={rating}
-                        onClick={() => setPreTradeConfidence(rating)}
-                        className={`flex-1 h-10 text-xs sm:text-sm font-bold rounded-lg border transition-all ${
-                          rating <= preTradeConfidence
-                            ? "bg-amber-500 text-white border-amber-600 shadow-xs"
-                            : "bg-muted text-muted-foreground border-border hover:bg-muted/80"
-                        }`}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Pre-Trade Emotion */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">
+                      Pre-Trade Mental State
+                    </Label>
+                    <ResponsiveCombobox
+                      value={preTradeEmotion}
+                      onValueChange={val => setPreTradeEmotion(val as PreTradeEmotion)}
+                      items={PRE_TRADE_EMOTION_OPTIONS}
+                      searchPlaceholder="Search mental state..."
+                      emptyMessage="No matching state."
+                      title="Pre-Trade Emotional State"
+                      placeholder="Select mindset..."
+                    />
+                  </div>
+
+                  {/* Setup Conviction */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">
+                      Setup Conviction
+                    </Label>
+                    <div className="h-9 px-3 rounded-lg border border-border bg-background flex items-center justify-between gap-2 shadow-2xs">
+                      <div
+                        role="radiogroup"
+                        aria-label="Setup conviction level"
+                        className="flex items-center gap-0.5"
                       >
-                        {rating}★
-                      </button>
-                    ))}
+                        {[1, 2, 3, 4, 5].map(rating => {
+                          const isFilled = rating <= (hoverRating ?? preTradeConfidence)
+                          return (
+                            <button
+                              key={rating}
+                              type="button"
+                              role="radio"
+                              aria-checked={preTradeConfidence === rating}
+                              aria-label={CONVICTION_LABELS[rating]}
+                              tabIndex={preTradeConfidence === rating ? 0 : -1}
+                              onClick={() => setPreTradeConfidence(rating)}
+                              onMouseEnter={() => setHoverRating(rating)}
+                              onMouseLeave={() => setHoverRating(null)}
+                              onKeyDown={e => {
+                                if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+                                  e.preventDefault()
+                                  setPreTradeConfidence(Math.min(5, preTradeConfidence + 1))
+                                  setHoverRating(null)
+                                } else if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+                                  e.preventDefault()
+                                  setPreTradeConfidence(Math.max(1, preTradeConfidence - 1))
+                                  setHoverRating(null)
+                                }
+                              }}
+                              className="p-1 rounded hover:bg-muted/60 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+                            >
+                              <Star
+                                className={cn(
+                                  "h-4 w-4 transition-colors",
+                                  isFilled
+                                    ? "fill-amber-400 text-amber-500"
+                                    : "fill-transparent stroke-muted-foreground/40 text-muted-foreground/40"
+                                )}
+                              />
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <span className="text-xs font-medium text-muted-foreground font-mono">
+                        {CONVICTION_LABELS[hoverRating ?? preTradeConfidence]}
+                      </span>
+                    </div>
                   </div>
                 </div>
+              </fieldset>
 
-                {/* Post-Trade Exit Discipline */}
-                <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Post-Trade Exit Execution</Label>
-                  <ResponsiveCombobox
-                    value={postTradeEmotion}
-                    onValueChange={val => setPostTradeEmotion(val as PostTradeEmotion)}
-                    items={POST_TRADE_EMOTION_OPTIONS}
-                    searchPlaceholder="Search exit execution..."
-                    emptyMessage="No matching execution found."
-                    title="Post-Trade Exit Execution"
-                    placeholder="Select exit execution..."
-                  />
+              {/* 3.b) AFTER THE TRADE */}
+              <fieldset className="space-y-3">
+                <div className="pb-1.5 border-b border-border/50">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    After The Trade
+                  </legend>
                 </div>
-              </div>
 
-              {/* Mistakes Log (Crucial SRS 3.1 & 4.4 requirement) */}
-              <div className="rounded-xl border border-rose-500/20 bg-rose-500/[0.03] p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-2">
-                    <ShieldAlert className="h-4 w-4" />
-                    Mistake Classification (Cost of Error Tracking)
-                  </Label>
-                </div>
-                <ResponsiveCombobox
-                  value={mistakeTag}
-                  onValueChange={val => setMistakeTag(val as MistakeTag)}
-                  items={MISTAKE_OPTIONS}
-                  searchPlaceholder="Search mistake classification..."
-                  emptyMessage="No matching mistake tag found."
-                  title="Classify Trading Error"
-                  placeholder="Select mistake classification..."
-                  triggerClassName="border-rose-300/60 dark:border-rose-900 bg-background"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Tagging errors allows the analytics dashboard to calculate your exact financial loss under specific habits (e.g. &ldquo;Cost of FOMO&rdquo;).
-                </p>
-              </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Post-Trade Exit Discipline */}
+                  <div>
+                    <Label className="text-xs font-semibold mb-1.5 block">
+                      Exit Execution
+                    </Label>
+                    <ResponsiveCombobox
+                      value={postTradeEmotion}
+                      onValueChange={val => setPostTradeEmotion(val as PostTradeEmotion)}
+                      items={POST_TRADE_EMOTION_OPTIONS}
+                      searchPlaceholder="Search exit execution..."
+                      emptyMessage="No matching execution found."
+                      title="Post-Trade Exit Execution"
+                      placeholder="Select exit execution..."
+                    />
+                  </div>
 
-              {/* Lessons Learned Journal */}
-              <div className="space-y-2">
-                <Label htmlFor="lessons" className="text-xs sm:text-sm font-semibold">
-                  Lessons Learned & Trader&apos;s Reflection
-                </Label>
-                <Textarea
-                  id="lessons"
-                  rows={4}
-                  placeholder="What did you do right? What psychological urge did you face? What will you repeat next time?"
-                  value={lessonsLearned}
-                  onChange={e => setLessonsLearned(e.target.value)}
-                  className="text-xs sm:text-sm leading-relaxed bg-background"
-                />
-              </div>
+                  {/* Mistake Classification */}
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <Label className="text-xs font-semibold">
+                        Mistake (cost of error tracking)
+                      </Label>
+                      <Tooltip>
+                        <TooltipTrigger
+                          type="button"
+                          className="text-muted-foreground/60 hover:text-foreground transition-colors inline-flex items-center cursor-pointer p-0.5 focus:outline-none"
+                          aria-label="Mistake tracking information"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          Tagging errors allows the analytics dashboard to calculate your exact financial loss under specific habits (e.g. &ldquo;Cost of FOMO&rdquo;).
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
 
-              {/* Tags */}
-              <div className="space-y-2.5">
-                <Label className="text-xs sm:text-sm font-semibold">Custom Setup Tags</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder="Add tag and press Enter"
-                    value={tagInput}
-                    onChange={e => setTagInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") {
-                        e.preventDefault()
-                        handleAddTag()
-                      }
-                    }}
-                    className="text-xs sm:text-sm h-9 max-w-xs bg-background"
-                  />
-                  <Button type="button" size="sm" variant="outline" onClick={handleAddTag} className="h-9 text-xs">
-                    Add Tag
-                  </Button>
+                    <ResponsiveCombobox
+                      value={mistakeTag}
+                      onValueChange={val => {
+                        const next = val as MistakeTag
+                        setMistakeTag(next)
+                        if (next === "NONE") {
+                          setReflectionError(null)
+                        }
+                      }}
+                      items={MISTAKE_OPTIONS}
+                      searchPlaceholder="Search mistake classification..."
+                      emptyMessage="No matching mistake tag found."
+                      title="Classify Trading Error"
+                      placeholder="Select mistake classification..."
+                      triggerClassName="bg-background"
+                    />
+
+                    {/* Progressive Disclosure Container */}
+                    {mistakeTag !== "NONE" && (
+                      <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-800 dark:text-amber-200 animate-in fade-in-50 duration-200">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                        <span className="leading-tight">
+                          Analytics dashboard will attribute financial loss from this trade to the <strong>{MISTAKE_OPTIONS.find(m => m.value === mistakeTag)?.label || mistakeTag}</strong> habit.
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {tags.map(t => (
-                    <Badge key={t} variant="secondary" className="text-xs gap-1.5 py-1 px-2.5">
-                      #{t}
-                      <button type="button" onClick={() => handleRemoveTag(t)}>
-                        <X className="h-3.5 w-3.5 hover:text-foreground" />
-                      </button>
-                    </Badge>
-                  ))}
+              </fieldset>
+
+              {/* 3.c) REFLECTION */}
+              <fieldset className="space-y-3">
+                <div className="pb-1.5 border-b border-border/50">
+                  <legend className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Reflection
+                  </legend>
                 </div>
-              </div>
+
+                <div className="space-y-4">
+                  {/* Reflection Textarea */}
+                  <div>
+                    <Label htmlFor="lessons" className="text-xs font-semibold mb-1.5 block">
+                      Lessons Learned & Trader&apos;s Reflection
+                      {mistakeTag !== "NONE" && (
+                        <span className="text-rose-500 font-normal ml-1">* Required for mistakes</span>
+                      )}
+                    </Label>
+                    <Textarea
+                      id="lessons"
+                      rows={3}
+                      placeholder="What did you do right? What will you repeat?"
+                      value={lessonsLearned}
+                      onChange={e => {
+                        setLessonsLearned(e.target.value)
+                        if (reflectionError && e.target.value.trim()) {
+                          setReflectionError(null)
+                        }
+                      }}
+                      onBlur={validateReflection}
+                      onInput={e => {
+                        const target = e.currentTarget
+                        target.style.height = "auto"
+                        const nextHeight = Math.min(target.scrollHeight, 144)
+                        target.style.height = `${nextHeight}px`
+                      }}
+                      className={cn(
+                        "text-xs sm:text-sm leading-relaxed bg-background min-h-[72px] max-h-[144px] resize-none transition-colors",
+                        reflectionError && "border-rose-500 focus-visible:ring-rose-500"
+                      )}
+                    />
+                    <div className="flex items-center justify-between gap-2 mt-1.5 text-xs text-muted-foreground">
+                      <span className="text-[11px] text-muted-foreground/90">
+                        Prompts: What psychological urge did you face? Did you adhere to your risk rule? What will you repeat or avoid next time?
+                      </span>
+                      {lessonsLearned.length >= 200 && (
+                        <span className="font-mono text-[11px] shrink-0 text-muted-foreground">
+                          {lessonsLearned.length} chars
+                        </span>
+                      )}
+                    </div>
+                    {reflectionError && (
+                      <p className="text-xs text-rose-500 flex items-center gap-1.5 mt-1 font-medium">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                        {reflectionError}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Single Tag-Input with Suggestions */}
+                  <div>
+                    <Label htmlFor="tagInput" className="text-xs font-semibold mb-1.5 block">
+                      Custom Setup Tags
+                    </Label>
+                    <div className="flex flex-wrap items-center gap-1.5 p-1.5 min-h-9 rounded-lg border border-input bg-background focus-within:ring-1 focus-within:ring-ring focus-within:border-ring">
+                      {tags.map(t => (
+                        <span
+                          key={t}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-muted text-foreground border border-border"
+                        >
+                          <span>#{t}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(t)}
+                            aria-label={`Remove tag ${t}`}
+                            className="text-muted-foreground hover:text-foreground inline-flex items-center justify-center rounded-sm focus:outline-none"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        id="tagInput"
+                        type="text"
+                        value={tagInput}
+                        onChange={e => setTagInput(e.target.value)}
+                        onKeyDown={handleTagKeyDown}
+                        placeholder={tags.length === 0 ? "Type tag & press Enter or comma..." : "Add tag..."}
+                        className="flex-1 min-w-[140px] bg-transparent text-xs sm:text-sm px-1 py-0.5 outline-none placeholder:text-muted-foreground/60"
+                      />
+                    </div>
+
+                    {suggestedTags.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <span className="text-[11px] text-muted-foreground font-medium">Suggestions:</span>
+                        {suggestedTags.map(st => (
+                          <button
+                            type="button"
+                            key={st}
+                            onClick={() => handleAddSuggestedTag(st)}
+                            className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border border-dashed border-border/80 text-muted-foreground hover:text-foreground hover:border-foreground/40 hover:bg-muted/40 transition-colors cursor-pointer"
+                          >
+                            +{st}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </fieldset>
             </div>
           )}
 
@@ -1536,6 +1964,7 @@ export function TradeEntryDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+      </TooltipProvider>
     </Dialog>
   )
 }

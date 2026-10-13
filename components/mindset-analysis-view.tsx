@@ -98,6 +98,38 @@ export function MindsetAnalysisView(props: MindsetAnalysisViewProps = {}) {
             </div>
           ))}
         </div>
+
+        {/* Corroborated News Mistakes (Marketaux Symbol-Verified) */}
+        {trades.filter(t => (t.mistakeTag === "IGNORED_NEWS" || t.mistakeTag?.toLowerCase().includes("news")) && t.newsAtEntry).length > 0 && (
+          <div className="pt-3 border-t border-rose-500/20 space-y-2">
+            <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5" /> Corroborated &quot;Ignored News&quot; High-Impact Collisions:
+            </span>
+            <div className="space-y-1.5">
+              {trades
+                .filter(t => (t.mistakeTag === "IGNORED_NEWS" || t.mistakeTag?.toLowerCase().includes("news")) && t.newsAtEntry)
+                .map(t => (
+                  <div
+                    key={t.id}
+                    className="p-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-foreground">{t.instrument}</span>
+                      <Badge variant="outline" className="text-[10px] border-rose-500/40 text-rose-600 dark:text-rose-400">
+                        Ignored news
+                      </Badge>
+                      <span className="text-[11px] text-muted-foreground">
+                        {new Date(t.entryDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                    <span className="text-rose-700 dark:text-rose-300 font-medium text-xs">
+                      ⚠ headline within 90min of entry: &apos;{t.newsHeadline || t.newsHeadlineAtEntry}&apos;
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Two-Column Grid: Pre-trade mental state vs Exit management */}
