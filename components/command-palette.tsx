@@ -1,16 +1,13 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import {
-  Calculator,
   Calendar,
   Compass,
   FileDown,
-  Flame,
   LayoutDashboard,
   PlusCircle,
-  Search,
-  SlidersHorizontal,
   TrendingUp,
   BrainCircuit,
   AlertTriangle
@@ -26,45 +23,49 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
+import { useTrades } from "@/lib/trade-context"
 
-interface CommandPaletteProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onNewTradeClick: () => void
-  onNavigate: (sectionId: string) => void
-  onExportCsv: () => void
-}
+export function CommandPalette() {
+  const router = useRouter()
+  const {
+    commandPaletteOpen,
+    setCommandPaletteOpen,
+    openNewTradeModal,
+    exportTradesCsv,
+    setJournalSearchFilter
+  } = useTrades()
 
-export function CommandPalette({
-  open,
-  onOpenChange,
-  onNewTradeClick,
-  onNavigate,
-  onExportCsv
-}: CommandPaletteProps) {
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
-        onOpenChange(!open)
+        setCommandPaletteOpen(prev => !prev)
       }
     }
 
     document.addEventListener("keydown", down)
     return () => document.removeEventListener("keydown", down)
-  }, [open, onOpenChange])
+  }, [setCommandPaletteOpen])
+
+  const navigateTo = (path: string, filter?: string) => {
+    setCommandPaletteOpen(false)
+    if (filter !== undefined) {
+      setJournalSearchFilter(filter)
+    }
+    router.push(path)
+  }
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen}>
       <CommandInput placeholder="Search trades, pairs, strategies, emotions or actions... (⌘K)" />
-      <CommandList className="max-h-[360px]">
+      <CommandList className="max-h-[380px]">
         <CommandEmpty>No matching trade or action found.</CommandEmpty>
-        
+
         <CommandGroup heading="Actions">
           <CommandItem
             onSelect={() => {
-              onOpenChange(false)
-              onNewTradeClick()
+              setCommandPaletteOpen(false)
+              openNewTradeModal()
             }}
             className="cursor-pointer"
           >
@@ -72,11 +73,11 @@ export function CommandPalette({
             <span>Log New Trade Entry</span>
             <CommandShortcut>⌘N</CommandShortcut>
           </CommandItem>
-          
+
           <CommandItem
             onSelect={() => {
-              onOpenChange(false)
-              onExportCsv()
+              setCommandPaletteOpen(false)
+              exportTradesCsv()
             }}
             className="cursor-pointer"
           >
@@ -87,60 +88,59 @@ export function CommandPalette({
 
         <CommandSeparator />
 
-        <CommandGroup heading="Navigation">
+        <CommandGroup heading="Routes & Pages">
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("dashboard")
-            }}
+            onSelect={() => navigateTo("/")}
             className="cursor-pointer"
           >
             <LayoutDashboard className="mr-2 h-4 w-4 text-muted-foreground" />
             <span>Dashboard Overview</span>
-          </CommandItem>
-          
-          <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("analytics")
-            }}
-            className="cursor-pointer"
-          >
-            <TrendingUp className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>Equity Curve & Performance KPIs</span>
+            <CommandShortcut>/</CommandShortcut>
           </CommandItem>
 
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("journal")
-            }}
+            onSelect={() => navigateTo("/journal")}
             className="cursor-pointer"
           >
             <Compass className="mr-2 h-4 w-4 text-muted-foreground" />
             <span>Trade Logs & History</span>
+            <CommandShortcut>/journal</CommandShortcut>
           </CommandItem>
 
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("calendar")
-            }}
+            onSelect={() => navigateTo("/analytics")}
+            className="cursor-pointer"
+          >
+            <TrendingUp className="mr-2 h-4 w-4 text-muted-foreground" />
+            <span>Equity Curve & Performance KPIs</span>
+            <CommandShortcut>/analytics</CommandShortcut>
+          </CommandItem>
+
+          <CommandItem
+            onSelect={() => navigateTo("/calendar")}
             className="cursor-pointer"
           >
             <Calendar className="mr-2 h-4 w-4 text-muted-foreground" />
             <span>Trading Calendar</span>
+            <CommandShortcut>/calendar</CommandShortcut>
           </CommandItem>
 
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("psychology")
-            }}
+            onSelect={() => navigateTo("/psychology")}
             className="cursor-pointer"
           >
             <BrainCircuit className="mr-2 h-4 w-4 text-muted-foreground" />
-            <span>Psychology & Mistakes Log</span>
+            <span>Mindset & Emotions Tracker</span>
+            <CommandShortcut>/psychology</CommandShortcut>
+          </CommandItem>
+
+          <CommandItem
+            onSelect={() => navigateTo("/mistakes")}
+            className="cursor-pointer"
+          >
+            <AlertTriangle className="mr-2 h-4 w-4 text-muted-foreground" />
+            <span>Mistake Audit & Error Cost</span>
+            <CommandShortcut>/mistakes</CommandShortcut>
           </CommandItem>
         </CommandGroup>
 
@@ -148,30 +148,37 @@ export function CommandPalette({
 
         <CommandGroup heading="Quick Pair Filters">
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("journal-EURUSD")
-            }}
+            onSelect={() => navigateTo("/journal", "XAU/USD")}
+            className="cursor-pointer"
+          >
+            <span className="font-semibold text-xs bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded mr-2">
+              GOLD
+            </span>
+            <span>XAU/USD (Gold) Trades</span>
+          </CommandItem>
+          <CommandItem
+            onSelect={() => navigateTo("/journal", "EUR/USD")}
             className="cursor-pointer"
           >
             <span className="font-semibold text-xs bg-muted px-1.5 py-0.5 rounded mr-2">FX</span>
             <span>EUR/USD Trades</span>
           </CommandItem>
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("journal-XAUUSD")
-            }}
+            onSelect={() => navigateTo("/journal", "GBP/USD")}
             className="cursor-pointer"
           >
-            <span className="font-semibold text-xs bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded mr-2">METAL</span>
-            <span>XAU/USD (Gold) Trades</span>
+            <span className="font-semibold text-xs bg-muted px-1.5 py-0.5 rounded mr-2">FX</span>
+            <span>GBP/USD Trades</span>
           </CommandItem>
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("journal-GBPJPY")
-            }}
+            onSelect={() => navigateTo("/journal", "USD/JPY")}
+            className="cursor-pointer"
+          >
+            <span className="font-semibold text-xs bg-muted px-1.5 py-0.5 rounded mr-2">FX</span>
+            <span>USD/JPY Trades</span>
+          </CommandItem>
+          <CommandItem
+            onSelect={() => navigateTo("/journal", "GBP/JPY")}
             className="cursor-pointer"
           >
             <span className="font-semibold text-xs bg-muted px-1.5 py-0.5 rounded mr-2">FX</span>
@@ -183,20 +190,14 @@ export function CommandPalette({
 
         <CommandGroup heading="Mistake & Psychology Analysis">
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("mistake-FOMO")
-            }}
+            onSelect={() => navigateTo("/journal", "FOMO")}
             className="cursor-pointer"
           >
             <AlertTriangle className="mr-2 h-4 w-4 text-rose-500" />
             <span>Cost of FOMO Entries</span>
           </CommandItem>
           <CommandItem
-            onSelect={() => {
-              onOpenChange(false)
-              onNavigate("mistake-OVER_LEVERAGED")
-            }}
+            onSelect={() => navigateTo("/journal", "OVER_LEVERAGED")}
             className="cursor-pointer"
           >
             <AlertTriangle className="mr-2 h-4 w-4 text-amber-500" />
