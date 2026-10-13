@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Brain,
   AlertOctagon,
+  Target,
   LucideIcon
 } from "lucide-react"
 
@@ -13,7 +14,7 @@ export interface AppRoute {
   label: string
   shortTitle: string
   description: string
-  iconName: "LayoutDashboard" | "BookOpen" | "TrendingUp" | "CalendarDays" | "Brain" | "AlertOctagon"
+  iconName: "LayoutDashboard" | "BookOpen" | "TrendingUp" | "CalendarDays" | "Brain" | "AlertOctagon" | "Target"
   group: "core" | "insights" | "mindset"
   badge?: string
 }
@@ -33,6 +34,14 @@ export const APP_ROUTES: AppRoute[] = [
     shortTitle: "Journal",
     description: "Chronological trade logs, filtering, confluences, and trade detail inspection",
     iconName: "BookOpen",
+    group: "core"
+  },
+  {
+    path: "/strategies",
+    label: "Strategies",
+    shortTitle: "Setups",
+    description: "Manage backend strategies, active toggles, trade counts, and trade entry pins",
+    iconName: "Target",
     group: "core"
   },
   {

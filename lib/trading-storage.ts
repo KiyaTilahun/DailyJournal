@@ -283,7 +283,7 @@ export function computeSessionPerformance(trades: Trade[]): SessionPerformance[]
 }
 
 export function computeStrategyPerformance(trades: Trade[]): StrategyPerformance[] {
-  const map = new Map<StrategyType, { count: number; wins: number; pnl: number; sumRR: number }>()
+  const map = new Map<string, { count: number; wins: number; pnl: number; sumRR: number }>()
 
   for (const t of trades) {
     const item = map.get(t.strategy) || { count: 0, wins: 0, pnl: 0, sumRR: 0 }

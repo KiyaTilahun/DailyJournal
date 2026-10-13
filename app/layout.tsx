@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { AuthSessionProvider } from "@/components/auth-session-provider"
 import { TradeProvider } from "@/lib/trade-context"
 import { AppShell } from "@/components/app-shell"
 import { cn } from "@/lib/utils"
@@ -31,11 +32,13 @@ export default function RootLayout({
       className={cn("antialiased", fontMono.variable, "font-sans", inter.variable)}
     >
       <body>
-        <ThemeProvider>
-          <TradeProvider>
-            <AppShell>{children}</AppShell>
-          </TradeProvider>
-        </ThemeProvider>
+        <AuthSessionProvider>
+          <ThemeProvider>
+            <TradeProvider>
+              <AppShell>{children}</AppShell>
+            </TradeProvider>
+          </ThemeProvider>
+        </AuthSessionProvider>
       </body>
     </html>
   )

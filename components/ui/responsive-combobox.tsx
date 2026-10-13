@@ -243,7 +243,7 @@ export function ResponsiveCombobox({
     return (
       <div className={cn("relative w-full", className)}>
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetTrigger render={triggerNode} />
+          <SheetTrigger nativeButton={!renderTrigger} render={triggerNode} />
           <SheetContent
             side="bottom"
             className="p-0 z-[60] rounded-t-2xl max-h-[85vh] border-t border-border flex flex-col bg-popover"
@@ -269,7 +269,7 @@ export function ResponsiveCombobox({
   return (
     <div className={cn("relative w-full", className)}>
       <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger render={triggerNode} />
+        <PopoverTrigger nativeButton={!renderTrigger} render={triggerNode} />
         <PopoverContent
           align="start"
           sideOffset={4}

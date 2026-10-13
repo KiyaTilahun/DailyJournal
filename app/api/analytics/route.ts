@@ -1,20 +1,27 @@
 import { NextResponse } from "next/server"
 import { connectDB, isDbConfigured } from "@/lib/db"
 import { Trade } from "@/lib/models/Trade"
+import { getSessionUser } from "@/lib/auth-utils"
 
 export async function GET() {
   try {
     if (!isDbConfigured()) {
-      return NextResponse.json(
-        { error: "MONGODB_URI not configured. Using client-side analytics." },
-        { status: 503 }
-      )
+      return NextResponse.json({ error: "Database not configured" }, { status: 503 })
+    }
+
+    const user = await getSessionUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     await connectDB()
 
-    // 1. Overall Performance KPI aggregation (§8)
+    // Base match stage ensuring strict user isolation
+    const userMatch = { $match: { user: user._id } }
+
+    // 1. Overall Performance KPI aggregation (§8) scoped to user
     const perfAgg = await Trade.aggregate([
+      userMatch,
       {
         $group: {
           _id: null,
@@ -54,6 +61,7 @@ export async function GET() {
 
     // 2. Best/Worst Pairs (§4.3)
     const byPair = await Trade.aggregate([
+      userMatch,
       {
         $group: {
           _id: "$instrument",
@@ -82,6 +90,7 @@ export async function GET() {
 
     // 3. Best/Worst Sessions (§4.3)
     const bySession = await Trade.aggregate([
+      userMatch,
       {
         $group: {
           _id: "$session",
@@ -110,6 +119,7 @@ export async function GET() {
 
     // 4. Mistakes Analysis (§4.4)
     const byMistake = await Trade.aggregate([
+      userMatch,
       { $unwind: "$mistakes" },
       { $match: { mistakes: { $ne: "NONE" } } },
       {
@@ -138,10 +148,13 @@ export async function GET() {
         profitFactor,
         avgRR: Number((perf.avgRR || 0).toFixed(2)),
         expectancy: Number((perf.expectancy || 0).toFixed(2)),
+        currentBalance: user.accountBalance,
+        accountCurrency: user.accountCurrency,
       },
       byPair,
       bySession,
       byMistake,
+      balanceAdjustments: user.balanceAdjustments || [],
     })
   } catch (error: any) {
     console.error("GET /api/analytics error:", error)

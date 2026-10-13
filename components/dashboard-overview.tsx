@@ -23,7 +23,8 @@ import {
   TrendingDown,
   TrendingUp,
   XCircle,
-  Zap
+  Zap,
+  Wallet
 } from "lucide-react"
 
 import {
@@ -54,6 +55,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { AdjustBalanceDialog } from "@/components/adjust-balance-dialog"
 
 interface DashboardOverviewProps {
   summary: TradingAccountSummary
@@ -105,6 +107,8 @@ export function DashboardOverview() {
     else router.push("/")
   }
   const [timeRange, setTimeRange] = React.useState<"7d" | "30d" | "90d" | "all">("all")
+  const [currencyOrPercent, setCurrencyOrPercent] = React.useState<"dollar" | "percent">("dollar")
+  const [adjustBalanceOpen, setAdjustBalanceOpen] = React.useState(false)
   const [greeting, setGreeting] = React.useState("Good day")
   const [dailyPrompt, setDailyPrompt] = React.useState(PSYCHOLOGY_PROMPTS[0])
 
@@ -124,6 +128,25 @@ export function DashboardOverview() {
     const limit = timeRange === "7d" ? 7 : timeRange === "30d" ? 15 : 30
     return equityCurve.slice(-limit)
   }, [equityCurve, timeRange])
+
+  // Enriched equity with percentage calculation from starting capital
+  const enrichedEquity = React.useMemo(() => {
+    const base = summary.startingBalance || 10000
+    return filteredEquity.map(pt => {
+      const pGrowth = Number((((pt.balance - base) / base) * 100).toFixed(2))
+      return {
+        ...pt,
+        percentGrowth: pGrowth,
+        displayValue: currencyOrPercent === "dollar" ? pt.balance : pGrowth,
+      }
+    })
+  }, [filteredEquity, summary.startingBalance, currencyOrPercent])
+
+  // Max drawdown in absolute dollar terms
+  const maxDDDollar = React.useMemo(() => {
+    const peak = Math.max(summary.startingBalance, summary.currentBalance)
+    return peak * (summary.maxDrawdownPercent / 100)
+  }, [summary.startingBalance, summary.currentBalance, summary.maxDrawdownPercent])
 
   // Today's trades
   const todayStr = new Date().toISOString().slice(0, 10)
@@ -224,9 +247,9 @@ export function DashboardOverview() {
         </div>
       </div>
 
-      {/* 3. Stats Row: Bento Mini-Grid of 4 Cards (Design Prompt 5.3 & SRS 4.1-4.2) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Net Profit & Balance */}
+      {/* 3. Stats Row: Bento Grid of 5 Cards with Current Balance Top-2 Placement (Rule 4.3) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4">
+        {/* Card 1: Net Profit / Loss */}
         <Card className="rounded-xl border shadow-xs hover:shadow-md transition-all">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -249,12 +272,39 @@ export function DashboardOverview() {
               {summary.netPnL >= 0 ? "+" : ""}${summary.netPnL.toLocaleString("en-US", { minimumFractionDigits: 2 })}
             </div>
             <p className="text-[11px] text-muted-foreground font-mono">
-              Balance: ${summary.currentBalance.toLocaleString()} (Start: ${summary.startingBalance.toLocaleString()})
+              From {summary.totalTrades} closed trade{summary.totalTrades === 1 ? "" : "s"}
             </p>
           </CardContent>
         </Card>
 
-        {/* Win Rate */}
+        {/* Card 2: Current Balance (Top-2 placement with Adjust Balance Affordance - Rule 4.3) */}
+        <Card className="rounded-xl border border-primary/40 bg-primary/[0.03] shadow-xs hover:shadow-md transition-all">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Wallet className="h-3.5 w-3.5 text-primary" />
+              Current Balance
+            </CardTitle>
+            <button
+              onClick={() => setAdjustBalanceOpen(true)}
+              className="text-[11px] font-bold text-primary hover:text-primary/80 hover:underline flex items-center gap-1 cursor-pointer bg-primary/10 px-2 py-0.5 rounded-md border border-primary/20"
+            >
+              Adjust
+            </button>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <div className="text-2xl font-bold font-mono tracking-tight text-foreground">
+              ${summary.currentBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+              <span>Max Drawdown:</span>
+              <span className="text-rose-600 dark:text-rose-400 font-bold">
+                -${maxDDDollar.toFixed(0)} ({summary.maxDrawdownPercent}%)
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Card 3: Win Rate */}
         <Card className="rounded-xl border shadow-xs hover:shadow-md transition-all">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -269,12 +319,12 @@ export function DashboardOverview() {
               {summary.winRate}%
             </div>
             <p className="text-[11px] text-muted-foreground font-mono">
-              {summary.wins}W / {summary.losses}L / {summary.breakEvens}BE ({summary.totalTrades} total)
+              {summary.wins}W / {summary.losses}L / {summary.breakEvens}BE
             </p>
           </CardContent>
         </Card>
 
-        {/* Profit Factor */}
+        {/* Card 4: Profit Factor */}
         <Card className="rounded-xl border shadow-xs hover:shadow-md transition-all">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -289,13 +339,13 @@ export function DashboardOverview() {
               {summary.profitFactor}
             </div>
             <p className="text-[11px] text-muted-foreground font-mono">
-              +${summary.grossProfit.toFixed(0)} gross / -${summary.grossLoss.toFixed(0)} loss
+              +${summary.grossProfit.toFixed(0)} / -${summary.grossLoss.toFixed(0)}
             </p>
           </CardContent>
         </Card>
 
-        {/* Expectancy & Realized R:R */}
-        <Card className="rounded-xl border shadow-xs hover:shadow-md transition-all">
+        {/* Card 5: Expectancy & Realized R:R */}
+        <Card className="rounded-xl border shadow-xs hover:shadow-md transition-all col-span-2 md:col-span-1 lg:col-span-1">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Avg Realized R:R
@@ -309,7 +359,7 @@ export function DashboardOverview() {
               {summary.averageRR}R
             </div>
             <p className="text-[11px] text-muted-foreground font-mono">
-              Expectancy: ${summary.expectancy}/trade | Max DD: {summary.maxDrawdownPercent}%
+              Expectancy: ${summary.expectancy}/trade
             </p>
           </CardContent>
         </Card>
@@ -317,32 +367,60 @@ export function DashboardOverview() {
 
       {/* 4. Two-Column Insight Area: Equity Curve (8 col) + Recent Trades (4 col) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: Equity Curve Chart */}
+        {/* Left: Equity Curve Chart with $ / % Toggle (Rule 4.2) */}
         <Card className="lg:col-span-8 rounded-xl border shadow-xs">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <div>
               <CardTitle className="text-base font-semibold tracking-tight">
-                Account Equity Curve & Cumulative Growth
+                Account Equity Curve & Capital Compounding
               </CardTitle>
               <CardDescription className="text-xs">
-                Real-time visual compounding of your trading capital over closed trades
+                Real-time visual trajectory of balance and percentage return over trades
               </CardDescription>
             </div>
-            <Select value={timeRange} onValueChange={(v: any) => setTimeRange(v)}>
-              <SelectTrigger className="w-24 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7d">7 trades</SelectItem>
-                <SelectItem value="30d">15 trades</SelectItem>
-                <SelectItem value="all">All trades</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              {/* Dollar / Percentage Toggle */}
+              <div className="flex items-center rounded-lg border bg-muted/40 p-0.5 text-xs font-mono font-medium">
+                <button
+                  type="button"
+                  onClick={() => setCurrencyOrPercent("dollar")}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    currencyOrPercent === "dollar"
+                      ? "bg-background text-foreground shadow-xs font-bold"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  $
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrencyOrPercent("percent")}
+                  className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                    currencyOrPercent === "percent"
+                      ? "bg-background text-foreground shadow-xs font-bold"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  %
+                </button>
+              </div>
+
+              <Select value={timeRange} onValueChange={(v: any) => setTimeRange(v)}>
+                <SelectTrigger className="w-24 h-8 text-xs bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7d">7 trades</SelectItem>
+                  <SelectItem value="30d">15 trades</SelectItem>
+                  <SelectItem value="all">All trades</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="h-72 w-full pt-2">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={filteredEquity} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <AreaChart data={enrichedEquity} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.35} />
@@ -363,7 +441,9 @@ export function DashboardOverview() {
                     tickLine={false}
                     axisLine={false}
                     domain={["auto", "auto"]}
-                    tickFormatter={(val: number) => `$${val}`}
+                    tickFormatter={(val: number) =>
+                      currencyOrPercent === "dollar" ? `$${val}` : `${val > 0 ? "+" : ""}${val}%`
+                    }
                   />
                   <Tooltip
                     content={({ active, payload }) => {
@@ -375,9 +455,12 @@ export function DashboardOverview() {
                             <p className="font-mono text-muted-foreground">
                               Balance: <strong className="text-popover-foreground">${data.balance.toLocaleString()}</strong>
                             </p>
+                            <p className="font-mono text-muted-foreground">
+                              Growth: <strong className="text-primary">{data.percentGrowth > 0 ? "+" : ""}{data.percentGrowth}%</strong>
+                            </p>
                             {data.netPnL !== 0 && (
                               <p className={`font-mono font-medium ${data.netPnL > 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                                PnL: {data.netPnL > 0 ? "+" : ""}${data.netPnL.toFixed(2)}
+                                Trade PnL: {data.netPnL > 0 ? "+" : ""}${data.netPnL.toFixed(2)}
                               </p>
                             )}
                           </div>
@@ -388,7 +471,7 @@ export function DashboardOverview() {
                   />
                   <Area
                     type="monotone"
-                    dataKey="balance"
+                    dataKey="displayValue"
                     stroke="var(--primary)"
                     strokeWidth={2.5}
                     fillOpacity={1}
@@ -402,9 +485,9 @@ export function DashboardOverview() {
               <span className="flex items-center gap-1.5">
                 <span className="h-2 w-2 rounded-full bg-primary" />
                 Capital Growth: ${(summary.currentBalance - summary.startingBalance).toFixed(2)} (
-                {(((summary.currentBalance - summary.startingBalance) / summary.startingBalance) * 100).toFixed(1)}%)
+                {(((summary.currentBalance - summary.startingBalance) / (summary.startingBalance || 1)) * 100).toFixed(1)}%)
               </span>
-              <span>Max Drawdown: <strong className="text-rose-500 font-mono">{summary.maxDrawdownPercent}%</strong></span>
+              <span>Max Drawdown: <strong className="text-rose-500 font-mono">-${maxDDDollar.toFixed(0)} ({summary.maxDrawdownPercent}%)</strong></span>
             </div>
           </CardContent>
         </Card>
@@ -578,6 +661,9 @@ export function DashboardOverview() {
 
       {/* Module Routes Quick Navigation Banner */}
       <RoutesNavigationBanner className="pt-2" />
+
+      {/* Adjust Account Balance Modal (Rule 4.3) */}
+      <AdjustBalanceDialog open={adjustBalanceOpen} onOpenChange={setAdjustBalanceOpen} />
     </div>
   )
 }

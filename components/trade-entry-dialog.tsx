@@ -56,6 +56,9 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { ResponsiveCombobox, ComboboxGroup } from "@/components/ui/responsive-combobox"
 import { MultiSelectCombobox } from "@/components/ui/multi-select-combobox"
+import Link from "next/link"
+import { calculateSuggestedLotSize, QUICK_LOT_SIZES } from "@/lib/constants"
+import { useTrades } from "@/lib/trade-context"
 
 interface TradeEntryDialogProps {
   open: boolean
@@ -364,6 +367,8 @@ export function TradeEntryDialog({
   onSaveTrade,
   editingTrade
 }: TradeEntryDialogProps) {
+  const { accountBalance } = useTrades()
+
   // Quantitative Form State
   const [instrument, setInstrument] = React.useState("EUR/USD")
   const [direction, setDirection] = React.useState<TradeDirection>("LONG")
@@ -374,21 +379,125 @@ export function TradeEntryDialog({
   const [takeProfitPrice, setTakeProfitPrice] = React.useState<string>("1.09100")
   const [exitPrice, setExitPrice] = React.useState<string>("1.09100")
   const [lotSize, setLotSize] = React.useState<string>("1.0")
-  const [commissions, setCommissions] = React.useState<string>("7.00")
+  const [riskPercent, setRiskPercent] = React.useState<string>("")
+  const [commissions, setCommissions] = React.useState<string>("0.00")
   const [swaps, setSwaps] = React.useState<string>("0.00")
-  const [spreadCost, setSpreadCost] = React.useState<string>("3.00")
+  const [spreadCost, setSpreadCost] = React.useState<string>("0.00")
   const [manualGrossPnL, setManualGrossPnL] = React.useState<string>("")
   const [manualNetPnL, setManualNetPnL] = React.useState<string>("")
 
-  // Qualitative Strategy State
-  const [strategy, setStrategy] = React.useState<StrategyType>("SMC_ORDER_BLOCK")
+  // Qualitative Strategy State - loads from backend /api/strategies
+  const [strategy, setStrategy] = React.useState<string>("SMC")
+  const [backendStrategies, setBackendStrategies] = React.useState<ComboboxGroup[]>([])
+  const [activeStrategyNames, setActiveStrategyNames] = React.useState<string[]>([])
   const [executionTimeframe, setExecutionTimeframe] = React.useState<"1m" | "5m" | "15m" | "30m" | "1h">("15m")
   const [trendTimeframe, setTrendTimeframe] = React.useState<"1h" | "4h" | "Daily" | "Weekly">("4h")
   const [session, setSession] = React.useState<TradeSession>("LONDON")
-  const [selectedConfluences, setSelectedConfluences] = React.useState<string[]>([
-    "HTF Trend Alignment",
-    "Order Block Retest"
-  ])
+  const [selectedConfluences, setSelectedConfluences] = React.useState<string[]>([])
+
+  // Fetch backend strategies on open, grouping pinned first (Rule 3.3)
+  React.useEffect(() => {
+    if (!open) return
+    fetch("/api/strategies?active=true")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          const activeStrats = data.filter((s: any) => s.active !== false)
+          const activeNames = activeStrats.map((s: any) => s.name)
+          setActiveStrategyNames(activeNames)
+
+          const pinned = activeStrats.filter((s: any) => s.isPinned)
+          const unpinned = activeStrats.filter((s: any) => !s.isPinned)
+          const groups: ComboboxGroup[] = []
+          if (pinned.length > 0) {
+            groups.push({
+              name: "📌 Pinned Playbooks",
+              items: pinned.map((s: any) => ({
+                value: s.name,
+                label: s.name,
+                subLabel: s.description || "Pinned strategy",
+                badge: "📌 Pinned",
+              })),
+            })
+          }
+          if (unpinned.length > 0) {
+            groups.push({
+              name: "All Active Strategies",
+              items: unpinned.map((s: any) => ({
+                value: s.name,
+                label: s.name,
+                subLabel: s.description || undefined,
+                badge: `${s.tradeCount || 0} trades`,
+              })),
+            })
+          }
+          if (groups.length > 0) {
+            setBackendStrategies(groups)
+          }
+        }
+      })
+      .catch(err => console.warn("Failed to fetch strategies for combobox:", err))
+  }, [open])
+
+  // Only show active strategies in the checklist grid
+  const displayedConfluences = React.useMemo(() => {
+    if (activeStrategyNames.length > 0) {
+      return activeStrategyNames
+    }
+    return [
+      "SMC Order Block",
+      "Liquidity Sweep",
+      "Supply & Demand",
+      "Breakout Momentum",
+      "Trend Pullback",
+      "Fair Value Gap (FVG)",
+      "Price Action"
+    ]
+  }, [activeStrategyNames])
+
+  // Live XAU Benchmark Rates via exchangerate.fun (cached 6h server-side)
+  const [goldTicker, setGoldTicker] = React.useState<{
+    price: number
+    formattedPrice: string
+    rates: Record<string, number>
+  } | null>(null)
+
+  // Fetch server-cached live XAU benchmark rates on dialog open (no client polling)
+  React.useEffect(() => {
+    if (!open) return
+    fetch("/api/fx/gold")
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.price) {
+          setGoldTicker({
+            price: data.price,
+            formattedPrice: data.formattedPrice || `$${Math.round(data.price).toLocaleString()}`,
+            rates: data.rates || {},
+          })
+        }
+      })
+      .catch(err => console.warn("Failed to fetch server-cached XAU rates:", err))
+  }, [open])
+
+  // Computed suggested lot size hint based on risk % and pip value lookup (Rule 2 & 3.3)
+  const suggestedLotInfo = React.useMemo(() => {
+    const riskNum = parseFloat(riskPercent)
+    const entryNum = parseFloat(entryPrice)
+    const slNum = parseFloat(stopLossPrice)
+    if (isNaN(riskNum) || isNaN(entryNum) || isNaN(slNum) || riskNum <= 0) return null
+    return calculateSuggestedLotSize(
+      instrument,
+      accountBalance,
+      riskNum,
+      entryNum,
+      slNum,
+      {
+        accountCurrency: "USD",
+        liveGoldPriceUsd: goldTicker?.price,
+        rates: goldTicker?.rates,
+      }
+    )
+  }, [riskPercent, entryPrice, stopLossPrice, instrument, accountBalance, goldTicker])
 
   // Psychology & Media State
   const [preTradeEmotion, setPreTradeEmotion] = React.useState<PreTradeEmotion>("CONFIDENT")
@@ -446,6 +555,7 @@ export function TradeEntryDialog({
       setTakeProfitPrice(editingTrade.takeProfitPrice.toString())
       setExitPrice(editingTrade.exitPrice.toString())
       setLotSize(editingTrade.lotSize.toString())
+      setRiskPercent(editingTrade.riskPercent ? editingTrade.riskPercent.toString() : "")
       setCommissions(editingTrade.commissions.toString())
       setSwaps(editingTrade.swaps.toString())
       setSpreadCost(editingTrade.spreadCost.toString())
@@ -476,16 +586,17 @@ export function TradeEntryDialog({
       setTakeProfitPrice("1.09100")
       setExitPrice("1.09100")
       setLotSize("1.0")
-      setCommissions("7.00")
+      setRiskPercent("")
+      setCommissions("0.00")
       setSwaps("0.00")
-      setSpreadCost("3.00")
+      setSpreadCost("0.00")
       setManualGrossPnL("")
       setManualNetPnL("")
-      setStrategy("SMC_ORDER_BLOCK")
+      setStrategy("SMC")
       setExecutionTimeframe("15m")
       setTrendTimeframe("4h")
       setSession("LONDON")
-      setSelectedConfluences(["HTF Trend Alignment", "Order Block Retest"])
+      setSelectedConfluences([])
       setPreTradeEmotion("CONFIDENT")
       setPreTradeConfidence(4)
       setPostTradeEmotion("HELD_TO_TP")
@@ -594,6 +705,8 @@ export function TradeEntryDialog({
       takeProfitPrice: parseFloat(takeProfitPrice) || 0,
       exitPrice: parseFloat(exitPrice) || 0,
       lotSize: parseFloat(lotSize) || 1.0,
+      riskPercent: riskPercent ? parseFloat(riskPercent) : undefined,
+      balanceAtEntry: editingTrade?.balanceAtEntry || accountBalance,
       commissions: parseFloat(commissions) || 0,
       swaps: parseFloat(swaps) || 0,
       spreadCost: parseFloat(spreadCost) || 0,
@@ -694,9 +807,11 @@ export function TradeEntryDialog({
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {/* Instrument / Pair */}
                 <div className="space-y-2 lg:col-span-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label htmlFor="instrument" className="text-xs sm:text-sm font-semibold flex items-center gap-1.5">
-                      <span>Instrument / Pair</span>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Label htmlFor="instrument" className="text-xs sm:text-sm font-semibold flex items-center gap-1.5">
+                        Instrument / Pair
+                      </Label>
                       {isGoldAsset ? (
                         <span className="text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
                           🪙 Gold (100 oz/lot)
@@ -714,7 +829,18 @@ export function TradeEntryDialog({
                           Standard FX (100k lot)
                         </span>
                       )}
-                    </Label>
+
+                      {/* Subtle live benchmark ticker chip next to the instrument picker */}
+                      {goldTicker && (
+                        <span
+                          title="Reference benchmark rate via exchangerate.fun (cached 6h). Not used for execution pricing."
+                          className="text-[10px] bg-amber-500/10 text-amber-800 dark:text-amber-300 font-mono font-medium px-2 py-0.5 rounded-full border border-amber-500/25 inline-flex items-center gap-1.5 shadow-2xs"
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 inline-block animate-pulse" />
+                          XAU/USD ≈ {goldTicker.formattedPrice}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Presets catalog combobox */}
                     <div className="w-auto">
@@ -926,62 +1052,128 @@ export function TradeEntryDialog({
                   </div>
                 </div>
 
-                {/* Position & Costs */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="lotSize" className="text-xs font-semibold text-muted-foreground">
-                      Lot Size
-                    </Label>
-                    <Input
-                      id="lotSize"
-                      type="number"
-                      step="0.01"
-                      value={lotSize}
-                      onChange={e => setLotSize(e.target.value)}
-                      className="font-mono text-sm h-10 bg-background"
-                    />
+                {/* Position, Risk & Costs */}
+                <div className="space-y-3.5 pt-1">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+                    {/* Lot Size */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="lotSize" className="text-xs font-semibold text-muted-foreground">
+                        Lot Size
+                      </Label>
+                      <Input
+                        id="lotSize"
+                        type="number"
+                        step="0.01"
+                        value={lotSize}
+                        onChange={e => setLotSize(e.target.value)}
+                        className="font-mono text-sm h-10 bg-background"
+                      />
+                    </div>
+
+                    {/* Risk % (0-10%) */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="riskPercent" className="text-xs font-semibold text-muted-foreground flex items-center gap-1">
+                        <Percent className="h-3 w-3 text-primary" />
+                        Risk % (0–10%)
+                      </Label>
+                      <Input
+                        id="riskPercent"
+                        type="number"
+                        step="0.25"
+                        min="0"
+                        max="10"
+                        placeholder="e.g. 1.0"
+                        value={riskPercent}
+                        onChange={e => setRiskPercent(e.target.value)}
+                        className="font-mono text-sm h-10 bg-background"
+                      />
+                    </div>
+
+                    {/* Commissions */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="commissions" className="text-xs font-semibold text-muted-foreground">
+                        Commissions ($)
+                      </Label>
+                      <Input
+                        id="commissions"
+                        type="number"
+                        step="0.1"
+                        value={commissions}
+                        onChange={e => setCommissions(e.target.value)}
+                        className="font-mono text-sm h-10 bg-background"
+                      />
+                    </div>
+
+                    {/* Swaps */}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="swaps" className="text-xs font-semibold text-muted-foreground">
+                        Swaps ($)
+                      </Label>
+                      <Input
+                        id="swaps"
+                        type="number"
+                        step="0.1"
+                        value={swaps}
+                        onChange={e => setSwaps(e.target.value)}
+                        className="font-mono text-sm h-10 bg-background"
+                      />
+                    </div>
+
+                    {/* Spread Cost */}
+                    <div className="space-y-1.5 col-span-2 sm:col-span-1">
+                      <Label htmlFor="spreadCost" className="text-xs font-semibold text-muted-foreground">
+                        Spread Cost ($)
+                      </Label>
+                      <Input
+                        id="spreadCost"
+                        type="number"
+                        step="0.1"
+                        value={spreadCost}
+                        onChange={e => setSpreadCost(e.target.value)}
+                        className="font-mono text-sm h-10 bg-background"
+                      />
+                    </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="commissions" className="text-xs font-semibold text-muted-foreground">
-                      Commissions ($)
-                    </Label>
-                    <Input
-                      id="commissions"
-                      type="number"
-                      step="0.1"
-                      value={commissions}
-                      onChange={e => setCommissions(e.target.value)}
-                      className="font-mono text-sm h-10 bg-background"
-                    />
-                  </div>
+                  {/* Quick Lot Buttons & Suggested Lot Size Hint (Rule 3.3) */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] text-muted-foreground font-semibold mr-1">Quick Lots:</span>
+                      {QUICK_LOT_SIZES.map(qLot => (
+                        <button
+                          type="button"
+                          key={qLot}
+                          onClick={() => setLotSize(qLot.toString())}
+                          className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold border transition-all cursor-pointer ${
+                            lotSize === qLot.toString()
+                              ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                              : "bg-muted/40 border-border/70 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          }`}
+                        >
+                          {qLot.toFixed(2)}
+                        </button>
+                      ))}
+                    </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="swaps" className="text-xs font-semibold text-muted-foreground">
-                      Swaps ($)
-                    </Label>
-                    <Input
-                      id="swaps"
-                      type="number"
-                      step="0.1"
-                      value={swaps}
-                      onChange={e => setSwaps(e.target.value)}
-                      className="font-mono text-sm h-10 bg-background"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="spreadCost" className="text-xs font-semibold text-muted-foreground">
-                      Spread Cost ($)
-                    </Label>
-                    <Input
-                      id="spreadCost"
-                      type="number"
-                      step="0.1"
-                      value={spreadCost}
-                      onChange={e => setSpreadCost(e.target.value)}
-                      className="font-mono text-sm h-10 bg-background"
-                    />
+                    {/* Computed suggested lot hint */}
+                    {suggestedLotInfo && (
+                      <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 font-medium">
+                        <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        <span>
+                          Suggested lot: <strong className="font-mono font-bold">{suggestedLotInfo.suggestedLots}</strong>
+                          <span className="text-muted-foreground ml-1">
+                            (${suggestedLotInfo.riskAmount} risk · {suggestedLotInfo.pipsAtRisk} pips)
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setLotSize(suggestedLotInfo.suggestedLots.toString())}
+                          className="ml-1 text-[11px] underline font-bold hover:text-emerald-900 dark:hover:text-emerald-100 cursor-pointer"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1025,11 +1217,21 @@ export function TradeEntryDialog({
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {/* Strategy Dropdown */}
                 <div className="space-y-2">
-                  <Label className="text-xs sm:text-sm font-semibold">Strategy Model</Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs sm:text-sm font-semibold">Strategy Model</Label>
+                    <Link
+                      href="/strategies"
+                      target="_blank"
+                      className="text-[11px] text-primary hover:underline"
+                    >
+                      Manage
+                    </Link>
+                  </div>
                   <ResponsiveCombobox
                     value={strategy}
-                    onValueChange={val => setStrategy(val as StrategyType)}
-                    items={STRATEGY_OPTIONS}
+                    onValueChange={val => setStrategy(val)}
+                    groups={backendStrategies.length > 0 ? backendStrategies : undefined}
+                    items={backendStrategies.length === 0 ? STRATEGY_OPTIONS : undefined}
                     searchPlaceholder="Search strategy model..."
                     emptyMessage="No strategy model found."
                     title="Select Strategy Model"
@@ -1084,10 +1286,10 @@ export function TradeEntryDialog({
               <div className="rounded-xl border border-border/80 bg-card p-5 sm:p-6 space-y-4 shadow-xs">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs sm:text-sm font-bold uppercase tracking-wider text-muted-foreground block">
-                    Checklist & Confluences Met
+                    Checklist & Active Strategies Met
                   </Label>
                   <span className="text-xs text-muted-foreground font-mono">
-                    {selectedConfluences.length} of {COMMON_CONFLUENCES.length} selected
+                    {selectedConfluences.length} of {displayedConfluences.length} selected
                   </span>
                 </div>
 
@@ -1095,16 +1297,16 @@ export function TradeEntryDialog({
                 <MultiSelectCombobox
                   values={selectedConfluences}
                   onValuesChange={setSelectedConfluences}
-                  options={COMMON_CONFLUENCES}
-                  placeholder="Click to search and select confluences..."
-                  searchPlaceholder="Filter confluences checklist..."
-                  emptyMessage="No matching confluence found."
-                  title="Confluence Setup Criteria"
+                  options={Array.from(new Set([...displayedConfluences, ...selectedConfluences]))}
+                  placeholder="Click to search and select active strategies & confluences..."
+                  searchPlaceholder="Filter active strategies checklist..."
+                  emptyMessage="No matching strategy or confluence found."
+                  title="Active Strategies & Confluence Criteria"
                   maxBadges={3}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
-                  {COMMON_CONFLUENCES.map(item => {
+                  {displayedConfluences.map(item => {
                     const checked = selectedConfluences.includes(item)
                     return (
                       <button

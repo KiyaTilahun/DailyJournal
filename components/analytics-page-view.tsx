@@ -52,12 +52,25 @@ export function AnalyticsPageView() {
   } = useTrades()
 
   const [timeRange, setTimeRange] = React.useState<"7d" | "30d" | "all">("all")
+  const [currencyOrPercent, setCurrencyOrPercent] = React.useState<"dollar" | "percent">("dollar")
 
   const filteredEquity = React.useMemo(() => {
     if (timeRange === "all" || equityCurve.length <= 2) return equityCurve
     const limit = timeRange === "7d" ? 7 : 15
     return equityCurve.slice(-limit)
   }, [equityCurve, timeRange])
+
+  const enrichedEquity = React.useMemo(() => {
+    const base = summary.startingBalance || 10000
+    return filteredEquity.map(pt => {
+      const pGrowth = Number((((pt.balance - base) / base) * 100).toFixed(2))
+      return {
+        ...pt,
+        percentGrowth: pGrowth,
+        displayValue: currencyOrPercent === "dollar" ? pt.balance : pGrowth,
+      }
+    })
+  }, [filteredEquity, summary.startingBalance, currencyOrPercent])
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -182,21 +195,49 @@ export function AnalyticsPageView() {
               Chronological equity compounding across all executed closed positions
             </CardDescription>
           </div>
-          <Select value={timeRange} onValueChange={(v: any) => setTimeRange(v)}>
-            <SelectTrigger className="w-28 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7d">Last 7 trades</SelectItem>
-              <SelectItem value="30d">Last 15 trades</SelectItem>
-              <SelectItem value="all">All trades</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            {/* Dollar / Percent Toggle Button */}
+            <div className="flex items-center rounded-lg border bg-muted/40 p-0.5 text-xs font-mono font-medium">
+              <button
+                type="button"
+                onClick={() => setCurrencyOrPercent("dollar")}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  currencyOrPercent === "dollar"
+                    ? "bg-background text-foreground shadow-xs font-bold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                $
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrencyOrPercent("percent")}
+                className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                  currencyOrPercent === "percent"
+                    ? "bg-background text-foreground shadow-xs font-bold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                %
+              </button>
+            </div>
+
+            <Select value={timeRange} onValueChange={(v: any) => setTimeRange(v)}>
+              <SelectTrigger className="w-28 h-8 text-xs bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7d">Last 7 trades</SelectItem>
+                <SelectItem value="30d">Last 15 trades</SelectItem>
+                <SelectItem value="all">All trades</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="h-80 w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={filteredEquity} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={enrichedEquity} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="equityGradientAnalytics" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.4} />
@@ -211,7 +252,9 @@ export function AnalyticsPageView() {
                   tickLine={false}
                   axisLine={false}
                   domain={["auto", "auto"]}
-                  tickFormatter={(val: number) => `$${val}`}
+                  tickFormatter={(val: number) =>
+                    currencyOrPercent === "dollar" ? `$${val}` : `${val > 0 ? "+" : ""}${val}%`
+                  }
                 />
                 <Tooltip
                   content={({ active, payload }) => {
@@ -223,9 +266,12 @@ export function AnalyticsPageView() {
                           <p className="font-mono text-muted-foreground">
                             Balance: <strong className="text-popover-foreground">${data.balance.toLocaleString()}</strong>
                           </p>
+                          <p className="font-mono text-muted-foreground">
+                            Return: <strong className="text-primary">{data.percentGrowth > 0 ? "+" : ""}{data.percentGrowth}%</strong>
+                          </p>
                           {data.netPnL !== 0 && (
                             <p className={`font-mono font-medium ${data.netPnL > 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                              PnL: {data.netPnL > 0 ? "+" : ""}${data.netPnL.toFixed(2)}
+                              Trade PnL: {data.netPnL > 0 ? "+" : ""}${data.netPnL.toFixed(2)}
                             </p>
                           )}
                         </div>
@@ -236,7 +282,7 @@ export function AnalyticsPageView() {
                 />
                 <Area
                   type="monotone"
-                  dataKey="balance"
+                  dataKey="displayValue"
                   stroke="var(--primary)"
                   strokeWidth={2.5}
                   fillOpacity={1}

@@ -28,9 +28,28 @@ import {
 
 export type DatabaseMode = "mongodb" | "local" | "connecting"
 
+export interface UserProfile {
+  id: string
+  name: string
+  email: string
+  accountBalance: number
+  accountCurrency: string
+  preferredStrategies: string[]
+  balanceAdjustments: Array<{
+    amount: number
+    type: "DEPOSIT" | "WITHDRAWAL" | "RESET"
+    note: string
+    date: string
+  }>
+}
+
 interface TradeContextValue {
   trades: Trade[]
   startingBalance: number
+  accountBalance: number
+  userProfile: UserProfile | null
+  refreshUserProfile: () => Promise<void>
+  adjustBalance: (amount: number, type: "DEPOSIT" | "WITHDRAWAL" | "RESET", note?: string) => Promise<{ success: boolean; error?: string }>
   dbMode: DatabaseMode
   summary: TradingAccountSummary
   equityCurve: Array<{ date: string; balance: number; netPnL: number; cumulativePnL: number }>
@@ -73,6 +92,8 @@ function mapMongoTradeToApp(doc: any): Trade {
     takeProfitPrice: doc.takeProfit ?? 0,
     exitPrice: doc.exitPrice ?? doc.entryPrice,
     lotSize: doc.lotSize ?? 1.0,
+    riskPercent: doc.riskPercent,
+    balanceAtEntry: doc.balanceAtEntry,
     commissions: doc.commission ?? 0,
     swaps: doc.swap ?? 0,
     spreadCost: doc.spread ?? 0,
@@ -81,7 +102,7 @@ function mapMongoTradeToApp(doc: any): Trade {
     plannedRR: doc.plannedRR ?? 0,
     realizedRR: doc.realizedRR ?? 0,
     status: doc.netPnL > 5 ? "WIN" : doc.netPnL < -5 ? "LOSS" : "BE",
-    strategy: doc.strategy || "SMC_ORDER_BLOCK",
+    strategy: doc.strategy || "SMC",
     executionTimeframe: doc.executionTF || "15m",
     trendTimeframe: doc.trendTF || "4h",
     session: doc.session || "LONDON",
@@ -102,6 +123,7 @@ function mapMongoTradeToApp(doc: any): Trade {
 export function TradeProvider({ children }: { children: React.ReactNode }) {
   const [trades, setTrades] = React.useState<Trade[]>([])
   const [startingBalance, setStartingBalance] = React.useState(10000)
+  const [userProfile, setUserProfile] = React.useState<UserProfile | null>(null)
   const [dbMode, setDbMode] = React.useState<DatabaseMode>("connecting")
 
   // Layout & Global Dialog States
@@ -111,6 +133,40 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
   const [editingTrade, setEditingTrade] = React.useState<Trade | null>(null)
   const [commandPaletteOpen, setCommandPaletteOpen] = React.useState(false)
   const [journalSearchFilter, setJournalSearchFilter] = React.useState("")
+
+  const refreshUserProfile = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/user/me")
+      if (res.ok) {
+        const data = await res.json()
+        setUserProfile(data)
+        if (typeof data.accountBalance === "number") {
+          setStartingBalance(data.accountBalance)
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch user profile:", err)
+    }
+  }, [])
+
+  const loadTrades = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/trades")
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data)) {
+          const mapped = data.map(mapMongoTradeToApp)
+          setTrades(mapped)
+          saveTrades(mapped)
+        }
+        setDbMode("mongodb")
+      } else {
+        setDbMode("local")
+      }
+    } catch {
+      setDbMode("local")
+    }
+  }, [])
 
   React.useEffect(() => {
     // 1. Load LocalStorage first for instant rendering
@@ -123,25 +179,10 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
       setSidebarCollapsed(savedSidebar === "true")
     }
 
-    // 2. Probe API to see if MongoDB Atlas is connected
-    fetch("/api/trades")
-      .then(async res => {
-        if (res.ok) {
-          const data = await res.json()
-          if (Array.isArray(data)) {
-            const mapped = data.map(mapMongoTradeToApp)
-            setTrades(mapped)
-            saveTrades(mapped)
-          }
-          setDbMode("mongodb")
-        } else {
-          setDbMode("local")
-        }
-      })
-      .catch(() => {
-        setDbMode("local")
-      })
-  }, [])
+    // 2. Fetch authenticated profile and trades
+    refreshUserProfile()
+    loadTrades()
+  }, [refreshUserProfile, loadTrades])
 
   const toggleSidebar = () => {
     setSidebarCollapsed(prev => {
@@ -176,10 +217,17 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [])
 
-  // Analytics calculations
+  // Analytics calculations - scoped to user and their account balance
   const summary = React.useMemo(() => {
-    return computeAccountSummary(trades, startingBalance)
-  }, [trades, startingBalance])
+    const computed = computeAccountSummary(trades, startingBalance)
+    if (userProfile && typeof userProfile.accountBalance === "number") {
+      return {
+        ...computed,
+        currentBalance: userProfile.accountBalance,
+      }
+    }
+    return computed
+  }, [trades, startingBalance, userProfile])
 
   const equityCurve = React.useMemo(() => {
     return computeEquityCurve(trades, startingBalance)
@@ -211,6 +259,28 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
     setTradeEntryOpen(true)
   }
 
+  const adjustBalance = async (
+    amount: number,
+    type: "DEPOSIT" | "WITHDRAWAL" | "RESET",
+    note?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch("/api/user/balance-adjust", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, type, note }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        return { success: false, error: data.error || "Failed to adjust balance" }
+      }
+      await refreshUserProfile()
+      return { success: true }
+    } catch (e: any) {
+      return { success: false, error: e.message || "Failed to adjust balance" }
+    }
+  }
+
   const saveTrade = async (tradeData: Omit<Trade, "id" | "createdAt" | "updatedAt">) => {
     // 1. Optimistic Local Update
     if (editingTrade) {
@@ -234,6 +304,8 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
           takeProfit: tradeData.takeProfitPrice,
           exitPrice: tradeData.exitPrice,
           lotSize: tradeData.lotSize,
+          riskPercent: tradeData.riskPercent,
+          balanceAtEntry: tradeData.balanceAtEntry,
           commission: tradeData.commissions,
           swap: tradeData.swaps,
           spread: tradeData.spreadCost,
@@ -267,6 +339,9 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
             body: JSON.stringify(payload),
           })
         }
+
+        await loadTrades()
+        await refreshUserProfile()
       } catch (err) {
         console.warn("MongoDB sync failed, saved locally:", err)
       }
@@ -282,6 +357,8 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
     if (dbMode === "mongodb") {
       try {
         await fetch(`/api/trades/${id}`, { method: "DELETE" })
+        await loadTrades()
+        await refreshUserProfile()
       } catch (err) {
         console.warn("MongoDB delete sync failed:", err)
       }
@@ -297,23 +374,18 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
         try {
           const res = await fetch("/api/seed", { method: "POST" })
           if (res.ok) {
-            const fresh = await fetch("/api/trades")
-            if (fresh.ok) {
-              const data = await fresh.json()
-              if (Array.isArray(data) && data.length > 0) {
-                setTrades(data.map(mapMongoTradeToApp))
-              }
-            }
+            await loadTrades()
+            await refreshUserProfile()
           }
         } catch (err) {
-          console.warn("MongoDB seed sync error:", err)
+          console.warn("Seed failed:", err)
         }
       }
     }
   }
 
   const exportTradesCsv = () => {
-    downloadCSV(trades)
+    window.open("/api/export/csv", "_blank")
   }
 
   return (
@@ -321,6 +393,10 @@ export function TradeProvider({ children }: { children: React.ReactNode }) {
       value={{
         trades,
         startingBalance,
+        accountBalance: userProfile?.accountBalance ?? startingBalance,
+        userProfile,
+        refreshUserProfile,
+        adjustBalance,
         dbMode,
         summary,
         equityCurve,

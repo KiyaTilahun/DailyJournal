@@ -53,8 +53,11 @@ export interface Trade {
   realizedRR: number
   status: TradeStatus
 
+  balanceAtEntry?: number
+  riskPercent?: number
+
   // 2.2 Setup & Strategy (Qualitative)
-  strategy: StrategyType
+  strategy: string
   executionTimeframe: "1m" | "5m" | "15m" | "30m" | "1h"
   trendTimeframe: "1h" | "4h" | "Daily" | "Weekly"
   session: TradeSession
@@ -111,7 +114,7 @@ export interface SessionPerformance {
 }
 
 export interface StrategyPerformance {
-  strategy: StrategyType
+  strategy: string
   tradesCount: number
   winRate: number
   netPnL: number

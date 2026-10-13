@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document, Model } from "mongoose"
+import mongoose, { Schema, Document, Model, Types } from "mongoose"
 
 export interface ITradeScreenshot {
   label: "ENTRY_TF" | "HTF_CONTEXT" | string
@@ -6,6 +6,9 @@ export interface ITradeScreenshot {
 }
 
 export interface ITrade extends Document {
+  _id: Types.ObjectId
+  user: Types.ObjectId
+  balanceAtEntry?: number
   instrument: string
   direction: "LONG" | "SHORT"
   entryTime: Date
@@ -44,6 +47,10 @@ export interface ITrade extends Document {
 
 const tradeSchema = new Schema<ITrade>(
   {
+    // ── Owner & Balance Snapshot ──────────────────────────────
+    user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    balanceAtEntry: { type: Number },
+
     // ── §2.1 Execution (quantitative) ─────────────────────────
     instrument: { type: String, required: true, uppercase: true, trim: true },
     direction: { type: String, enum: ["LONG", "SHORT"], required: true },
@@ -54,7 +61,7 @@ const tradeSchema = new Schema<ITrade>(
     takeProfit: { type: Number },
     exitPrice: { type: Number },
     lotSize: { type: Number, default: 1.0 },
-    riskPercent: { type: Number },
+    riskPercent: { type: Number, min: 0, max: 10 },
     commission: { type: Number, default: 0 },
     swap: { type: Number, default: 0 },
     spread: { type: Number, default: 0 },
@@ -98,13 +105,18 @@ const tradeSchema = new Schema<ITrade>(
   { timestamps: true }
 )
 
-// Indexes defined in Section 6.2 of MongoDB Plan
-tradeSchema.index({ exitTime: -1 })
-tradeSchema.index({ instrument: 1, exitTime: -1 })
-tradeSchema.index({ strategy: 1 })
-tradeSchema.index({ session: 1 })
-tradeSchema.index({ mistakes: 1 })
-tradeSchema.index({ createdAt: -1 })
+// Compound user-scoped indexes for fast query performance
+tradeSchema.index({ user: 1, exitTime: -1 })
+tradeSchema.index({ user: 1, entryTime: -1 })
+tradeSchema.index({ user: 1, instrument: 1, exitTime: -1 })
+tradeSchema.index({ user: 1, strategy: 1 })
+tradeSchema.index({ user: 1, session: 1 })
+tradeSchema.index({ user: 1, mistakes: 1 })
+
+if (process.env.NODE_ENV !== "production" && mongoose.models.Trade) {
+  delete (mongoose.models as any).Trade
+}
 
 export const Trade: Model<ITrade> =
   mongoose.models.Trade || mongoose.model<ITrade>("Trade", tradeSchema)
+

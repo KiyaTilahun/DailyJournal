@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePathname } from "next/navigation"
 import { useTrades } from "@/lib/trade-context"
 import { SidebarNav } from "@/components/sidebar-nav"
 import { HeaderBar } from "@/components/header-bar"
@@ -9,7 +10,18 @@ import { CommandPalette } from "@/components/command-palette"
 import { GlobalTradeDialog } from "@/components/global-trade-dialog"
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
   const { mobileMenuOpen, setMobileMenuOpen } = useTrades()
+
+  const isAuthPage = pathname === "/login" || pathname === "/register"
+
+  if (isAuthPage) {
+    return (
+      <div className="min-h-screen w-full bg-background flex flex-col justify-center items-center">
+        {children}
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">

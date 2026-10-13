@@ -10,6 +10,7 @@ import {
   CalendarDays,
   Brain,
   AlertOctagon,
+  Target,
   ArrowRight
 } from "lucide-react"
 
@@ -24,7 +25,8 @@ const ICON_MAP = {
   TrendingUp,
   CalendarDays,
   Brain,
-  AlertOctagon
+  AlertOctagon,
+  Target
 }
 
 interface RoutesNavigationBannerProps {

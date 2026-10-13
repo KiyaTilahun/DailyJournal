@@ -17,8 +17,12 @@ import {
   BookOpen,
   CalendarDays,
   Brain,
-  AlertOctagon
+  AlertOctagon,
+  Target,
+  LogOut,
+  User as UserIcon
 } from "lucide-react"
+import { useSession, signOut } from "next-auth/react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -38,11 +42,13 @@ const ICON_MAP = {
   TrendingUp,
   CalendarDays,
   Brain,
-  AlertOctagon
+  AlertOctagon,
+  Target,
 }
 
 export function SidebarNav() {
   const pathname = usePathname()
+  const { data: session } = useSession()
   const {
     sidebarCollapsed,
     toggleSidebar,
@@ -307,43 +313,81 @@ export function SidebarNav() {
         </div>
 
         {/* Bottom User & Balance Widget */}
-        <div className="p-3 border-t border-sidebar-border bg-sidebar/50">
+        <div className="p-3 border-t border-sidebar-border bg-sidebar/50 space-y-2">
           {sidebarCollapsed ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <div className="flex flex-col items-center gap-1 cursor-default">
-                    <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-xs">
-                      FX
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <div className="flex flex-col items-center gap-1 cursor-default">
+                      <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-xs uppercase">
+                        {session?.user?.name?.[0] || "FX"}
+                      </div>
+                      <span className="text-[9px] font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                        ${(summary.currentBalance / 1000).toFixed(1)}k
+                      </span>
                     </div>
-                    <span className="text-[9px] font-mono font-semibold text-emerald-600 dark:text-emerald-400">
-                      ${(summary.currentBalance / 1000).toFixed(1)}k
+                  }
+                />
+                <TooltipContent side="right">
+                  {session?.user?.name || "Trader"} | ${summary.currentBalance.toLocaleString()}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => signOut({ callbackUrl: "/login" })}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg mx-auto text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors cursor-pointer"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                    </button>
+                  }
+                />
+                <TooltipContent side="right">Sign Out</TooltipContent>
+              </Tooltip>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2.5 p-2 rounded-lg bg-card/60 border border-border/60">
+                <div className="h-9 w-9 shrink-0 rounded-full bg-primary/15 text-primary flex items-center justify-center font-bold text-xs border border-primary/20">
+                  <Wallet className="h-4 w-4" />
+                </div>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold truncate">Live Balance</span>
+                    <span className="flex items-center text-[10px] text-amber-600 dark:text-amber-400 font-mono font-medium">
+                      <Flame className="h-3 w-3 mr-0.5 fill-amber-500 text-amber-500" />
+                      {summary.currentStreak.count}
                     </span>
                   </div>
-                }
-              />
-              <TooltipContent side="right">
-                Balance: ${summary.currentBalance.toLocaleString()} | Streak: {summary.currentStreak.count}W
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <div className="flex items-center gap-2.5 p-2 rounded-lg bg-card/60 border border-border/60">
-              <div className="h-9 w-9 shrink-0 rounded-full bg-primary/15 text-primary flex items-center justify-center font-bold text-xs border border-primary/20">
-                <Wallet className="h-4 w-4" />
-              </div>
-              <div className="flex flex-col min-w-0 flex-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold truncate">Live Balance</span>
-                  <span className="flex items-center text-[10px] text-amber-600 dark:text-amber-400 font-mono font-medium">
-                    <Flame className="h-3 w-3 mr-0.5 fill-amber-500 text-amber-500" />
-                    {summary.currentStreak.count}
+                  <span className="font-mono text-sm font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
+                    ${summary.currentBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                <span className="font-mono text-sm font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
-                  ${summary.currentBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
               </div>
-            </div>
+
+              {session?.user && (
+                <div className="flex items-center justify-between px-1 pt-1 text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="h-6 w-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-[10px] font-bold text-primary uppercase">
+                      {session.user.name?.[0] || "U"}
+                    </div>
+                    <div className="truncate flex flex-col">
+                      <span className="font-medium text-foreground truncate text-xs">{session.user.name}</span>
+                      <span className="text-[10px] text-muted-foreground truncate">{session.user.email}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => signOut({ callbackUrl: "/login" })}
+                    title="Sign Out"
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </aside>
